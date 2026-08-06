@@ -8,6 +8,7 @@ export async function startWebRuntime({
   appRoot,
   host,
   port,
+  publicUrl,
   startServer = startWebServer,
   createRelay = createRendererRelay,
   startHost = startApplicationHost,
@@ -16,7 +17,12 @@ export async function startWebRuntime({
     throw new Error("A generated application root is required");
   }
   const resolvedAppRoot = await realpath(appRoot);
-  const server = await startServer({ appRoot: resolvedAppRoot, host, port });
+  const server = await startServer({
+    appRoot: resolvedAppRoot,
+    host,
+    port,
+    publicUrl,
+  });
   const relay = createRelay({
     httpServer: server.httpServer,
     origin: server.origin,
@@ -30,7 +36,7 @@ export async function startWebRuntime({
     applicationHost = await startHost({
       appRoot: resolvedAppRoot,
       relayUrl: relay.hostUrl,
-      rendererUrl: server.url,
+      rendererUrl: server.internalUrl,
     });
 
     await Promise.race([

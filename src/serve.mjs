@@ -8,8 +8,10 @@ import {
   formatAuthority,
   isWildcardHost,
   normalizeHost,
+  normalizePublicUrl,
   normalizePort,
 } from "./network-options.mjs";
+
 const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -127,6 +129,7 @@ export async function startWebServer({
   appRoot,
   host = "127.0.0.1",
   port = 0,
+  publicUrl,
   capability = randomBytes(32).toString("base64url"),
 } = {}) {
   if (appRoot === undefined) {
@@ -134,6 +137,7 @@ export async function startWebServer({
   }
   const normalizedHost = normalizeHost(host);
   const normalizedPort = normalizePort(port);
+  const normalizedPublicUrl = normalizePublicUrl(publicUrl);
 
   const resolvedAppRoot = await realpath(appRoot);
   const webviewRoot = await realpath(join(resolvedAppRoot, "upstream", "webview"));
@@ -150,14 +154,14 @@ export async function startWebServer({
   let listenerPort = null;
   let listenerOrigin = null;
 
-  function requestOrigin(hostHeader) {
-    if (typeof hostHeader !== "string" || listenerPort === null) {
+  function hostOrigin(hostHeader, protocol) {
+    if (typeof hostHeader !== "string") {
       return null;
     }
 
     let candidate;
     try {
-      candidate = new URL(`http://${hostHeader}`);
+      candidate = new URL(`${protocol}//${hostHeader}`);
     } catch {
       return null;
     }
@@ -170,18 +174,37 @@ export async function startWebServer({
     ) {
       return null;
     }
+    return candidate;
+  }
 
-    const candidatePort = candidate.port === "" ? 80 : Number(candidate.port);
+  function requestOrigin(hostHeader) {
+    if (listenerPort === null) {
+      return null;
+    }
+
+    if (normalizedPublicUrl !== null) {
+      const publicCandidate = hostOrigin(hostHeader, "https:");
+      if (publicCandidate?.origin === normalizedPublicUrl) {
+        return normalizedPublicUrl;
+      }
+    }
+
+    const internalCandidate = hostOrigin(hostHeader, "http:");
+    if (internalCandidate === null) {
+      return null;
+    }
+    const candidatePort =
+      internalCandidate.port === "" ? 80 : Number(internalCandidate.port);
     if (candidatePort !== listenerPort) {
       return null;
     }
     if (
       !isWildcardHost(normalizedHost) &&
-      candidate.hostname !== new URL(listenerOrigin).hostname
+      internalCandidate.hostname !== new URL(listenerOrigin).hostname
     ) {
       return null;
     }
-    return candidate.origin;
+    return internalCandidate.origin;
   }
   const server = createServer(async (request, response) => {
     setSecurityHeaders(response);
@@ -204,7 +227,7 @@ export async function startWebServer({
       equalSecret(presentedCapability, capability)
     ) {
       response.writeHead(303, {
-        "Set-Cookie": `codex_web_cap=${capability}; HttpOnly; SameSite=Strict; Path=/`,
+        "Set-Cookie": `codex_web_cap=${capability}; HttpOnly; SameSite=Strict; Path=/${allowedRequestOrigin.startsWith("https:") ? "; Secure" : ""}`,
         Location: url.pathname,
       });
       response.end();
@@ -254,8 +277,10 @@ export async function startWebServer({
   listenerPort = address.port;
   listenerOrigin = `http://${formatAuthority(normalizedHost, listenerPort)}`;
 
+  const browserOrigin = normalizedPublicUrl ?? listenerOrigin;
   return {
-    url: `${listenerOrigin}/?cap=${capability}`,
+    url: `${browserOrigin}/?cap=${capability}`,
+    internalUrl: `${listenerOrigin}/?cap=${capability}`,
     origin: listenerOrigin,
     isRequestOriginAllowed(request) {
       const allowedOrigin = requestOrigin(request.headers.host);

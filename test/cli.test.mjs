@@ -76,7 +76,15 @@ test("serve forwards explicit host and port options", async () => {
   let closed = false;
 
   const exitCode = await run(
-    ["serve", "--host", "0.0.0.0", "--port", "8080"],
+    [
+      "serve",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "8080",
+      "--public-url",
+      "https://codex.example.com",
+    ],
     {
       stdout: stdout.stream,
       stderr: stderr.stream,
@@ -84,7 +92,7 @@ test("serve forwards explicit host and port options", async () => {
       startRuntime: async options => {
         calls.push(options);
         return {
-          url: "http://0.0.0.0:8080/?cap=fixture",
+          url: "https://codex.example.com/?cap=fixture",
           async close() {
             closed = true;
           },
@@ -100,10 +108,11 @@ test("serve forwards explicit host and port options", async () => {
       appRoot: "/tmp/generated-app",
       host: "0.0.0.0",
       port: 8080,
+      publicUrl: "https://codex.example.com",
     },
   ]);
   assert.equal(closed, true);
-  assert.ok(stdout.read().includes("Open http://0.0.0.0:8080"));
+  assert.ok(stdout.read().includes("Open https://codex.example.com"));
   assert.match(stderr.read(), /non-loopback HTTP/);
 });
 
@@ -130,7 +139,12 @@ test("deploy builds and installs a user service with network options", async () 
   const deployCalls = [];
 
   const exitCode = await run(
-    ["deploy", "--host=192.0.2.10", "--port=8443"],
+    [
+      "deploy",
+      "--host=192.0.2.10",
+      "--port=8443",
+      "--public-url=https://codex.example.com",
+    ],
     {
       stdout: stdout.stream,
       stderr: stderr.stream,
@@ -142,7 +156,7 @@ test("deploy builds and installs a user service with network options", async () 
         deployCalls.push(options);
         return {
           servicePath: "/tmp/codex-web.service",
-          url: "http://192.0.2.10:8443/?cap=fixture",
+          url: "https://codex.example.com/?cap=fixture",
         };
       },
     },
@@ -156,9 +170,10 @@ test("deploy builds and installs a user service with network options", async () 
       projectRoot: buildCalls[0].root,
       host: "192.0.2.10",
       port: 8443,
+      publicUrl: "https://codex.example.com",
     },
   ]);
   assert.ok(stdout.read().includes("Installed /tmp/codex-web.service"));
-  assert.ok(stdout.read().includes("Open http://192.0.2.10:8443"));
+  assert.ok(stdout.read().includes("Open https://codex.example.com"));
   assert.match(stderr.read(), /non-loopback HTTP/);
 });

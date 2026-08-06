@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { request } from "node:http";
 import {
   mkdir,
   mkdtemp,
@@ -209,6 +210,54 @@ test("build and serve the patched upstream interface", async (context) => {
       headers: {
         host: remoteUrl.host,
         origin: "http://attacker.invalid",
+      },
+    }),
+    false,
+  );
+
+  const proxiedServer = await startWebServer({
+    appRoot: result.outputRoot,
+    host: "127.0.0.1",
+    port: 0,
+    publicUrl: "https://codex.example.test",
+    capability: "proxy-fixture",
+  });
+  context.after(() => proxiedServer.close());
+  assert.equal(
+    proxiedServer.url,
+    "https://codex.example.test/?cap=proxy-fixture",
+  );
+  assert.match(proxiedServer.internalUrl, /^http:\/\/127\.0\.0\.1:/);
+
+  const proxiedRequestUrl = new URL(proxiedServer.internalUrl);
+  const proxiedCapability = await new Promise((resolve, reject) => {
+    const request_ = request(
+      proxiedRequestUrl,
+      { headers: { Host: "codex.example.test" } },
+      response => {
+        response.resume();
+        response.once("end", () => resolve(response));
+      },
+    );
+    request_.once("error", reject);
+    request_.end();
+  });
+  assert.equal(proxiedCapability.statusCode, 303);
+  assert.match(proxiedCapability.headers["set-cookie"][0], /; Secure/);
+  assert.equal(
+    proxiedServer.isRequestOriginAllowed({
+      headers: {
+        host: "codex.example.test",
+        origin: "https://codex.example.test",
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    proxiedServer.isRequestOriginAllowed({
+      headers: {
+        host: "codex.example.test",
+        origin: "http://codex.example.test",
       },
     }),
     false,

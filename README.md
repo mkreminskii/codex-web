@@ -52,6 +52,21 @@ Both `--host VALUE` and `--host=VALUE` are accepted. The port option supports bo
 
 Port `0` selects a random available port. Valid explicit ports are from `1` through `65535`.
 
+Use `--public-url` when an HTTPS reverse proxy exposes `codex-web` at a public origin. The flag works with both `serve` and `deploy`.
+
+```sh
+./src/cli.mjs deploy \
+  --host 127.0.0.1 \
+  --port 4310 \
+  --public-url https://codex.example.com
+```
+
+`codex-web` continues to listen on the address from `--host` and `--port`. It uses the public origin for the reported browser URL and browser security checks.
+
+The value must be an HTTPS origin without credentials, a path, a query, or a fragment. The reverse proxy must terminate TLS, preserve the public `Host` and `Origin` headers, and support WebSocket upgrades.
+
+Both `--public-url VALUE` and `--public-url=VALUE` are accepted.
+
 A wildcard listener is supported:
 
 ```sh
@@ -136,4 +151,3 @@ pjdoc validate --scope all
 - [Product brief](doc/brief.md)
 - [Specification](doc/spec/index.md)
 - [Architecture contracts](doc/architecture/index.md)
-

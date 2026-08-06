@@ -44,6 +44,35 @@ export function normalizePort(value) {
   return port;
 }
 
+export function normalizePublicUrl(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string" || value === "" || value !== value.trim()) {
+    throw new Error("Public URL must be a non-empty HTTPS origin");
+  }
+
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Invalid public URL: ${value}`);
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw new Error(
+      "Public URL must be an HTTPS origin without credentials, a path, a query, or a fragment",
+    );
+  }
+  return url.origin;
+}
+
 export function isLoopbackHost(host) {
   return host === "127.0.0.1" || host === "::1" || host === "localhost";
 }
@@ -56,4 +85,3 @@ export function formatAuthority(host, port) {
   const formattedHost = isIP(host) === 6 ? `[${host}]` : host;
   return `${formattedHost}:${port}`;
 }
-

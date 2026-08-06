@@ -28,6 +28,7 @@ export function createUserServiceUnit({
   projectRoot,
   host,
   port,
+  publicUrl = null,
   environment = process.env,
   nodePath = process.execPath,
 }) {
@@ -40,6 +41,7 @@ export function createUserServiceUnit({
     host,
     "--port",
     String(port),
+    ...(publicUrl === null ? [] : ["--public-url", publicUrl]),
   ]
     .map(quoteSystemdArgument)
     .join(" ");
@@ -92,7 +94,7 @@ async function runCommand(command, arguments_) {
 
 function reportedUrl(output) {
   for (const line of output.trimEnd().split(/\r?\n/).reverse()) {
-    if (line.startsWith("Open http://")) {
+    if (line.startsWith("Open http://") || line.startsWith("Open https://")) {
       return line.slice("Open ".length).trim();
     }
   }
@@ -103,6 +105,7 @@ export async function installUserService({
   projectRoot,
   host,
   port,
+  publicUrl = null,
   homeDirectory = homedir(),
   nodePath = process.execPath,
   environment = process.env,
@@ -136,6 +139,7 @@ export async function installUserService({
     projectRoot,
     host,
     port,
+    publicUrl,
     nodePath,
     environment,
   });

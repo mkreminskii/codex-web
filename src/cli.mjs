@@ -10,13 +10,14 @@ import {
   isLoopbackHost,
   normalizeHost,
   normalizePort,
+  normalizePublicUrl,
 } from "./network-options.mjs";
 import { startWebRuntime } from "./web-runtime.mjs";
 
 const usage = `Usage:
   codex-web build [Codex.dmg]
-  codex-web serve [--host HOST] [--port PORT]
-  codex-web deploy [--host HOST] [--port PORT]`;
+  codex-web serve [--host HOST] [--port PORT] [--public-url HTTPS_ORIGIN]
+  codex-web deploy [--host HOST] [--port PORT] [--public-url HTTPS_ORIGIN]`;
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -28,14 +29,20 @@ function writeError(stderr, error) {
 function parseNetworkArguments(arguments_) {
   let host = "127.0.0.1";
   let port = 0;
+  let publicUrl = null;
   let hostSeen = false;
   let portSeen = false;
+  let publicUrlSeen = false;
 
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
     let name;
     let value;
-    if (argument === "--host" || argument === "--port") {
+    if (
+      argument === "--host" ||
+      argument === "--port" ||
+      argument === "--public-url"
+    ) {
       name = argument;
       value = arguments_[index + 1];
       if (value === undefined || value.startsWith("--")) {
@@ -48,6 +55,9 @@ function parseNetworkArguments(arguments_) {
     } else if (argument.startsWith("--port=")) {
       name = "--port";
       value = argument.slice("--port=".length);
+    } else if (argument.startsWith("--public-url=")) {
+      name = "--public-url";
+      value = argument.slice("--public-url=".length);
     } else {
       throw new Error(`Unknown serve option: ${argument}`);
     }
@@ -58,16 +68,22 @@ function parseNetworkArguments(arguments_) {
       }
       hostSeen = true;
       host = normalizeHost(value);
-    } else {
+    } else if (name === "--port") {
       if (portSeen) {
         throw new Error("--port can be supplied only once");
       }
       portSeen = true;
       port = normalizePort(value);
+    } else {
+      if (publicUrlSeen) {
+        throw new Error("--public-url can be supplied only once");
+      }
+      publicUrlSeen = true;
+      publicUrl = normalizePublicUrl(value);
     }
   }
 
-  return { host, port };
+  return { host, port, publicUrl };
 }
 
 function writeNetworkWarning(stderr, host) {
@@ -124,10 +140,10 @@ export async function run(
     }
 
     if (command === "serve") {
-      const { host, port } = parseNetworkArguments(arguments_);
+      const { host, port, publicUrl } = parseNetworkArguments(arguments_);
       writeNetworkWarning(stderr, host);
       const appRoot = await resolveAppRoot();
-      const runtime = await startRuntime({ appRoot, host, port });
+      const runtime = await startRuntime({ appRoot, host, port, publicUrl });
       stdout.write(`Open ${runtime.url}\n`);
       await waitForShutdownImpl();
       await runtime.close();
@@ -135,14 +151,14 @@ export async function run(
     }
 
     if (command === "deploy") {
-      const { host, port } = parseNetworkArguments(arguments_);
+      const { host, port, publicUrl } = parseNetworkArguments(arguments_);
       writeNetworkWarning(stderr, host);
       const buildResult = await build({ root: projectRoot });
       stdout.write(`Built codex-web at ${buildResult.outputRoot}\n`);
       if (buildResult.warning !== null) {
         stderr.write(`7z warning: ${buildResult.warning}\n`);
       }
-      const deployed = await deploy({ projectRoot, host, port });
+      const deployed = await deploy({ projectRoot, host, port, publicUrl });
       stdout.write(`Installed ${deployed.servicePath}\n`);
       stdout.write(`Open ${deployed.url}\n`);
       return 0;
