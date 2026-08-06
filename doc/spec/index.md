@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: SPEC-3
+  revision: SPEC-4
   files: []
 ---
 
@@ -36,6 +36,18 @@ Acceptance:
 - Explicit `--host` and `--port` options override both listener values.
 - Invalid host, port, Host header, origin, or capability values fail without opening an unauthenticated browser path.
 - A browser request for an unknown application asset does not return the main HTML document as false success.
+
+## REQ-PROJECT-001 — Browse local project folders
+
+The local Create project flow shall provide the existing upstream remote-project source-folder browser against the local host, as specified by `doc/brief.md#user-visible-surface`.
+
+Acceptance:
+
+- Opening Create project shows the same path field, parent-folder action, directory list, selection behavior, loading state, empty state, and failure state as New remote project.
+- The browser requests local directory entries and does not show a remote-host field.
+- The initial directory is the service user's home directory when the user has not selected a path.
+- Confirming the local project uses the selected absolute local source-folder path.
+- The browser does not open a native file dialog or a browser text prompt.
 
 ## REQ-DEPLOY-001 — Automate single-user deployment
 
@@ -84,6 +96,6 @@ Acceptance:
 
 ## Requirement coverage
 
-Current must-have requirements: `REQ-BUILD-001`, `REQ-UI-001`, `REQ-DEPLOY-001`, `REQ-BRIDGE-001`, `REQ-APPROVAL-001`, and `REQ-FAIL-001`.
+Current must-have requirements: `REQ-BUILD-001`, `REQ-UI-001`, `REQ-DEPLOY-001`, `REQ-BRIDGE-001`, `REQ-PROJECT-001`, `REQ-APPROVAL-001`, and `REQ-FAIL-001`.
 
 There are no deferred requirements in this first-draft specification.

@@ -38,6 +38,7 @@ async function stageSyntheticRuntime({ candidateRoot, packageJson }) {
 async function createSyntheticDmg(root) {
   const appSource = join(root, "app-source");
   const webviewRoot = join(appSource, "webview");
+  const assetsRoot = join(webviewRoot, "assets");
   const buildRoot = join(appSource, ".vite", "build");
   const resourcesRoot = join(
     root,
@@ -47,6 +48,7 @@ async function createSyntheticDmg(root) {
     "Resources",
   );
   await mkdir(webviewRoot, { recursive: true });
+  await mkdir(assetsRoot);
   await mkdir(buildRoot, { recursive: true });
   await mkdir(resourcesRoot, { recursive: true });
   await writeFile(
@@ -63,6 +65,10 @@ async function createSyntheticDmg(root) {
     "<!doctype html><html><head><title>Upstream Codex</title></head><body><main>upstream interface</main></body></html>\n",
   );
   await writeFile(join(webviewRoot, "app.js"), "globalThis.codexFixture = true;\n");
+  await writeFile(
+    join(assetsRoot, "app-initial-fixture.js"),
+    "function Lrc(e){let{sources:n,setSources:r}=e;lp(`workspace-root-option-picked`,()=>{});let k=(0,PQ.jsx)(Z,{id:`projectSetup.createLocalProject.sourceFoldersLabel`});return(0,PQ.jsxs)(jP,{className:`gap-2`,children:[k,`fixture`]})}function Rrc(){dp.dispatchMessage(`electron-pick-workspace-root-option`,{allowMultiple:!0})}function Lcc(e){return yp(`remote-workspace-directory-entries`,e)}var Hcc,Ucc,Wcc,qQ,Gcc,Kcc=n((()=>{}));\n",
+  );
   await writeFile(
     join(buildRoot, "preload.js"),
     '"use strict";var e=require("electron"),k=e.ipcRenderer.sendSync(`codex_desktop:get-shared-object-snapshot`)??{},B={getSharedObjectSnapshotValue:t=>k[t]};e.contextBridge.exposeInMainWorld(`electronBridge`,B);\n',
@@ -121,6 +127,21 @@ test("build and serve the patched upstream interface", async (context) => {
     ),
     /CODEX_WEB_HEADLESS/,
   );
+  const rendererSource = await readFile(
+    join(
+      result.outputRoot,
+      "upstream",
+      "webview",
+      "assets",
+      "app-initial-fixture.js",
+    ),
+    "utf8",
+  );
+  assert.match(rendererSource, /__codex_local_folder_browser/);
+  assert.match(rendererSource, /hostId:`local`/);
+  assert.match(rendererSource, /initialDirectoryPath:null/);
+  assert.match(rendererSource, /remote-workspace-directory-entries/);
+  assert.doesNotMatch(rendererSource, /electron-pick-workspace-root-option/);
   assert.equal(
     await realpath(join(root, "dist", "current")),
     await realpath(result.outputRoot),
@@ -176,8 +197,8 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.match(bridgeSource, /bootstrap\.sharedObjectSnapshot\[key\]/);
   assert.match(bridgeSource, /__codex_bootstrap/);
   assert.match(bridgeSource, /bootstrap\.sentryInitOptions/);
-  assert.match(bridgeSource, /window\.prompt/);
-  assert.match(bridgeSource, /workspace-root-option-picked/);
+  assert.doesNotMatch(bridgeSource, /window\.prompt/);
+  assert.doesNotMatch(bridgeSource, /workspace-root-option-picked/);
 
   const missing = await fetch(new URL("/missing", server.url), {
     headers: { Cookie: cookie.split(";")[0] },

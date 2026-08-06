@@ -4,13 +4,13 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: ARCH-2
+  revision: ARCH-3
   files: []
 ---
 
 # codex-web architecture contracts
 
-The current implementation scope is defined by `REQ-BUILD-001`, `REQ-UI-001`, `REQ-DEPLOY-001`, `REQ-BRIDGE-001`, `REQ-APPROVAL-001`, and `REQ-FAIL-001` in [the specification](../spec/index.md).
+The current implementation scope is defined by `REQ-BUILD-001`, `REQ-UI-001`, `REQ-DEPLOY-001`, `REQ-BRIDGE-001`, `REQ-PROJECT-001`, `REQ-APPROVAL-001`, and `REQ-FAIL-001` in [the specification](../spec/index.md).
 
 ## CTR-UPSTREAM-001 — Upstream payload boundary
 

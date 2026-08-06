@@ -187,21 +187,6 @@ const browserBridgeSource = String.raw`
     throw error;
   }
 
-  function pickWorkspaceRoot() {
-    const selected = window.prompt("Enter one absolute Linux source folder path");
-    if (selected === null) return;
-    const root = selected.trim();
-    if (!root.startsWith("/")) {
-      window.alert("Enter an absolute Linux path.");
-      return;
-    }
-    window.dispatchEvent(
-      new MessageEvent("message", {
-        data: { type: "workspace-root-option-picked", root },
-      }),
-    );
-  }
-
   function subscribeToWorkerMessages(workerId, callback) {
     let subscribers = workerSubscribers.get(workerId);
     if (subscribers === undefined) {
@@ -234,10 +219,6 @@ const browserBridgeSource = String.raw`
     sendMessageFromView: message => {
       if (message.type === "shared-object-set") {
         updateSharedObject(message.key, message.value);
-      }
-      if (message.type === "electron-pick-workspace-root-option") {
-        pickWorkspaceRoot();
-        return Promise.resolve();
       }
       return invoke("sendMessageFromView", [message]);
     },
@@ -508,6 +489,94 @@ function patchMainProcess(source) {
   return source.replace(match, replacement);
 }
 
+function patchWebviewRenderer(source) {
+  if (source.includes("__codex_local_folder_browser")) {
+    return source;
+  }
+
+  const pickerPattern =
+    /function [A-Za-z_$][\w$]*\(\)\{[A-Za-z_$][\w$]*\.dispatchMessage\(`electron-pick-workspace-root-option`,\{allowMultiple:!0\}\)\}/g;
+  const pickerMatches = [...source.matchAll(pickerPattern)];
+  if (pickerMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream local workspace folder picker, found ${pickerMatches.length}`,
+    );
+  }
+  const pickerSource = pickerMatches[0][0];
+  const pickerStart = pickerMatches[0].index;
+
+  const localComponentStart = source.lastIndexOf("function ", pickerStart - 1);
+  const localHeader = /^function ([A-Za-z_$][\w$]*)\(e\)\{/.exec(
+    source.slice(localComponentStart),
+  );
+  if (localComponentStart === -1 || localHeader === null) {
+    throw new Error("Upstream local project source-folder component was not found");
+  }
+
+  const localComponentSource = source.slice(localComponentStart, pickerStart);
+  if (!localComponentSource.includes("workspace-root-option-picked")) {
+    throw new Error("Upstream local project source-folder event contract was not found");
+  }
+
+  const layoutAliases =
+    /\(0,([A-Za-z_$][\w$]*)\.jsxs\)\(([A-Za-z_$][\w$]*),\{className:`gap-2`,children:\[k,/.exec(
+      localComponentSource,
+    );
+  const messageAlias =
+    /\(0,[A-Za-z_$][\w$]*\.jsx\)\(([A-Za-z_$][\w$]*),\{id:`projectSetup\.createLocalProject\.sourceFoldersLabel`/.exec(
+      localComponentSource,
+    )?.[1];
+  if (layoutAliases === null || messageAlias === undefined) {
+    throw new Error("Upstream local project source-folder layout was not found");
+  }
+
+  const remoteQueryIndex = source.indexOf(
+    "`remote-workspace-directory-entries`",
+    pickerStart + pickerSource.length,
+  );
+  const remoteComponentStart = source.lastIndexOf("function ", remoteQueryIndex);
+  const remoteHeader = /^function ([A-Za-z_$][\w$]*)\(e\)\{/.exec(
+    source.slice(remoteComponentStart),
+  );
+  if (remoteQueryIndex === -1 || remoteComponentStart === -1 || remoteHeader === null) {
+    throw new Error("Upstream remote source-folder browser was not found");
+  }
+
+  const initializerMatch = /=n\(\(\(\)=>\{/.exec(
+    source.slice(remoteComponentStart),
+  );
+  if (initializerMatch === null) {
+    throw new Error("Upstream remote source-folder browser module was not found");
+  }
+  const initializerEquals =
+    remoteComponentStart + initializerMatch.index;
+  const initializerName = /([A-Za-z_$][\w$]*)$/.exec(
+    source.slice(Math.max(0, initializerEquals - 256), initializerEquals),
+  )?.[1];
+  if (initializerName === undefined) {
+    throw new Error("Upstream remote source-folder browser initializer was not found");
+  }
+
+  const [, jsxAlias, sectionAlias] = layoutAliases;
+  const localComponentName = localHeader[1];
+  const remoteComponentName = remoteHeader[1];
+  const replacement =
+    `function ${localComponentName}(e){${initializerName}();` +
+    "let{sources:t,setSources:n}=e,r=t[0]??``,i=e=>{n(e.length===0?[]:[e])};" +
+    "return/* __codex_local_folder_browser */" +
+    `(0,${jsxAlias}.jsxs)(${sectionAlias},{className:\`gap-2\`,children:[` +
+    `(0,${jsxAlias}.jsx)(\`span\`,{className:\`text-sm font-medium text-token-text-primary select-none\`,` +
+    `children:(0,${jsxAlias}.jsx)(${messageAlias},{id:\`projectSetupDialog.remoteSourceFolder\`,` +
+    "defaultMessage:`Source folder`,description:`Label for the local project source folder browser`})})," +
+    `(0,${jsxAlias}.jsx)(${remoteComponentName},{hostId:\`local\`,initialDirectoryPath:null,` +
+    "selectedPath:r,setSelectedPath:i})]})}";
+
+  return source.replace(
+    source.slice(localComponentStart, pickerStart + pickerSource.length),
+    replacement,
+  );
+}
+
 function patchWebviewIndex(source) {
   if (source.includes("__codex_browser_bridge.js")) {
     return source;
@@ -522,9 +591,13 @@ function patchWebviewIndex(source) {
 export async function applyUpstreamWebPatches(upstreamRoot) {
   const preloadPath = join(upstreamRoot, ".vite", "build", "preload.js");
   const buildRoot = join(upstreamRoot, ".vite", "build");
-  const buildEntries = await import("node:fs/promises").then(({ readdir }) =>
+  const webviewRoot = join(upstreamRoot, "webview");
+  const assetsRoot = join(webviewRoot, "assets");
+  const { readdir } = await import("node:fs/promises");
+  const [buildEntries, assetEntries] = await Promise.all([
     readdir(buildRoot),
-  );
+    readdir(assetsRoot),
+  ]);
   const mainCandidates = buildEntries.filter(
     name => name.startsWith("main-") && name.endsWith(".js"),
   );
@@ -533,33 +606,42 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
       `Expected one upstream main-process bundle, found ${mainCandidates.length}`,
     );
   }
+  const rendererCandidates = assetEntries.filter(
+    name => name.startsWith("app-initial-") && name.endsWith(".js"),
+  );
+  if (rendererCandidates.length !== 1) {
+    throw new Error(
+      `Expected one upstream webview renderer bundle, found ${rendererCandidates.length}`,
+    );
+  }
 
   const mainPath = join(buildRoot, mainCandidates[0]);
-  const indexPath = join(upstreamRoot, "webview", "index.html");
-  const bridgePath = join(
-    upstreamRoot,
-    "webview",
-    "__codex_browser_bridge.js",
-  );
+  const indexPath = join(webviewRoot, "index.html");
+  const rendererPath = join(assetsRoot, rendererCandidates[0]);
+  const bridgePath = join(webviewRoot, "__codex_browser_bridge.js");
 
-  const [preload, mainProcess, index] = await Promise.all([
+  const [preload, mainProcess, index, renderer] = await Promise.all([
     readFile(preloadPath, "utf8"),
     readFile(mainPath, "utf8"),
     readFile(indexPath, "utf8"),
+    readFile(rendererPath, "utf8"),
   ]);
   const patchedPreload = patchPreload(preload);
   const patchedMainProcess = patchMainProcess(mainProcess);
   const patchedIndex = patchWebviewIndex(index);
+  const patchedRenderer = patchWebviewRenderer(renderer);
 
   await Promise.all([
     writeFile(preloadPath, patchedPreload),
     writeFile(mainPath, patchedMainProcess),
     writeFile(indexPath, patchedIndex),
+    writeFile(rendererPath, patchedRenderer),
     writeFile(bridgePath, browserBridgeSource),
   ]);
 
   return {
     mainBundle: mainCandidates[0],
+    rendererBundle: rendererCandidates[0],
     browserBridge: "__codex_browser_bridge.js",
   };
 }

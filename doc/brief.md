@@ -18,6 +18,7 @@ A documented start entry point serves the patched upstream interface and bridge 
 
 A documented deployment entry point builds the wrapper and installs a user-level systemd service.
 The upstream interface can open one existing local workspace, submit one Codex prompt, stream the response, and resolve an approval request.
+The local project flow reuses the upstream remote-project folder browser against the local host and starts at the service user's home directory.
 
 Unsupported desktop operations and upstream bundle drift produce visible failures.
 
@@ -30,6 +31,7 @@ The user starts one local service.
 The user opens the capability URL reported by the start or deployment entry point.
 
 The browser displays the extracted upstream Codex interface.
+The local Create project dialog shows the same source-folder browser as New remote project, without a remote-host field.
 
 ## Non-goals
 
