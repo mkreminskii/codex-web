@@ -6,6 +6,8 @@ import { startWebServer } from "./serve.mjs";
 
 export async function startWebRuntime({
   appRoot,
+  host,
+  port,
   startServer = startWebServer,
   createRelay = createRendererRelay,
   startHost = startApplicationHost,
@@ -14,17 +16,18 @@ export async function startWebRuntime({
     throw new Error("A generated application root is required");
   }
   const resolvedAppRoot = await realpath(appRoot);
-  const server = await startServer({ appRoot: resolvedAppRoot });
+  const server = await startServer({ appRoot: resolvedAppRoot, host, port });
   const relay = createRelay({
     httpServer: server.httpServer,
     origin: server.origin,
     capability: server.capability,
     onBootstrap: server.setBootstrap,
+    isOriginAllowed: server.isRequestOriginAllowed,
   });
 
-  let host;
+  let applicationHost;
   try {
-    host = await startHost({
+    applicationHost = await startHost({
       appRoot: resolvedAppRoot,
       relayUrl: relay.hostUrl,
       rendererUrl: server.url,
@@ -32,7 +35,7 @@ export async function startWebRuntime({
 
     await Promise.race([
       relay.waitForHost(),
-      host.exited.then((result) => {
+      applicationHost.exited.then((result) => {
         const detail = result.output === "" ? "" : `: ${result.output}`;
         throw new Error(
           `The upstream application host exited before readiness with code ${result.code}${detail}`,
@@ -40,12 +43,12 @@ export async function startWebRuntime({
       }),
     ]);
   } catch (error) {
-    if (host !== undefined) {
-      await host.stop().catch(() => {});
+    if (applicationHost !== undefined) {
+      await applicationHost.stop().catch(() => {});
     }
     await relay.close().catch(() => {});
     await server.close().catch(() => {});
-    const hostOutput = host?.output?.();
+    const hostOutput = applicationHost?.output?.();
     if (hostOutput) {
       throw new Error(`${error.message}: ${hostOutput}`, { cause: error });
     }
@@ -60,7 +63,7 @@ export async function startWebRuntime({
         return;
       }
       closed = true;
-      await host.stop();
+      await applicationHost.stop();
       await relay.close();
       await server.close();
     },

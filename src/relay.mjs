@@ -34,6 +34,7 @@ export function createRendererRelay({
   origin,
   capability,
   onBootstrap = () => {},
+  isOriginAllowed = request => request.headers.origin === origin,
   hostReadyTimeoutMs = 30_000,
 }) {
   const webSocketServer = new WebSocketServer({
@@ -75,14 +76,20 @@ export function createRendererRelay({
     const role = url.searchParams.get("role");
     const queryCapability = url.searchParams.get("cap");
     const cookie = cookieCapability(request);
+    let requestOriginAllowed = false;
+    try {
+      requestOriginAllowed = isOriginAllowed(request) === true;
+    } catch {
+      requestOriginAllowed = false;
+    }
     const isHost =
       role === "host" &&
-      (request.headers.origin === undefined || request.headers.origin === origin) &&
+      (request.headers.origin === undefined || requestOriginAllowed) &&
       queryCapability !== null &&
       equalSecret(queryCapability, capability);
     const isBrowser =
       role === "browser" &&
-      request.headers.origin === origin &&
+      requestOriginAllowed &&
       cookie !== null &&
       equalSecret(cookie, capability);
 

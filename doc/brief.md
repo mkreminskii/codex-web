@@ -6,7 +6,7 @@ Linux users can run the upstream Codex Desktop application through an Electron w
 
 ## Outcome
 
-`codex-web` wraps the current official Codex Desktop application and serves its upstream interface to a browser on the same Linux host.
+`codex-web` wraps the current official Codex Desktop application and serves its upstream interface to a Chromium-family browser from a Linux host.
 
 ## First-draft scope
 
@@ -14,8 +14,9 @@ The wrapper accepts an authorized current `Codex.dmg`, extracts its application 
 
 A documented local build entry point produces a runnable wrapper without replacing the upstream interface.
 
-A documented local start entry point serves the patched upstream interface and its required bridge on a loopback address.
+A documented start entry point serves the patched upstream interface and bridge on configurable host and port values.
 
+A documented deployment entry point builds the wrapper and installs a user-level systemd service.
 The upstream interface can open one existing local workspace, submit one Codex prompt, stream the response, and resolve an approval request.
 
 Unsupported desktop operations and upstream bundle drift produce visible failures.
@@ -26,7 +27,7 @@ The user builds the wrapper from a local `Codex.dmg`.
 
 The user starts one local service.
 
-The user opens the reported loopback URL in a supported browser.
+The user opens the capability URL reported by the start or deployment entry point.
 
 The browser displays the extracted upstream Codex interface.
 
@@ -34,7 +35,7 @@ The browser displays the extracted upstream Codex interface.
 
 The first draft does not create a new Codex interface.
 
-The first draft does not support remote clients, multiple users, package formats, mobile layouts, or general ChatGPT features.
+The first draft does not support multiple users, package formats, mobile layouts, public TLS termination, or general ChatGPT features.
 
 The first draft does not promise support for desktop-only integrations beyond the core conversation path.
 
@@ -56,5 +57,4 @@ The project path is `/home/yusing/projects/codex-web`.
 
 The host has an authorized current `Codex.dmg`.
 
-The first draft supports a Chromium-family browser on the same Linux host.
-
+The first draft supports a Chromium-family browser that can reach the configured Linux host and port.

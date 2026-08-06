@@ -29,6 +29,8 @@ test("entry point reports its command surface", async () => {
   assert.equal(exitCode, 2);
   assert.match(stdout.read(), /codex-web build \[Codex\.dmg\]/);
   assert.match(stdout.read(), /codex-web serve/);
+  assert.match(stdout.read(), /codex-web serve \[--host HOST\] \[--port PORT\]/);
+  assert.match(stdout.read(), /codex-web deploy \[--host HOST\] \[--port PORT\]/);
   assert.equal(stderr.read(), "");
 });
 
@@ -67,3 +69,96 @@ test("entry point reports command failures", async () => {
   assert.equal(stderr.read(), "codex-web: upstream layout changed\n");
 });
 
+test("serve forwards explicit host and port options", async () => {
+  const stdout = capture();
+  const stderr = capture();
+  const calls = [];
+  let closed = false;
+
+  const exitCode = await run(
+    ["serve", "--host", "0.0.0.0", "--port", "8080"],
+    {
+      stdout: stdout.stream,
+      stderr: stderr.stream,
+      resolveAppRoot: async () => "/tmp/generated-app",
+      startRuntime: async options => {
+        calls.push(options);
+        return {
+          url: "http://0.0.0.0:8080/?cap=fixture",
+          async close() {
+            closed = true;
+          },
+        };
+      },
+      waitForShutdownImpl: async () => {},
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(calls, [
+    {
+      appRoot: "/tmp/generated-app",
+      host: "0.0.0.0",
+      port: 8080,
+    },
+  ]);
+  assert.equal(closed, true);
+  assert.ok(stdout.read().includes("Open http://0.0.0.0:8080"));
+  assert.match(stderr.read(), /non-loopback HTTP/);
+});
+
+test("serve rejects an invalid port before startup", async () => {
+  const stderr = capture();
+  let started = false;
+
+  const exitCode = await run(["serve", "--port", "65536"], {
+    stderr: stderr.stream,
+    startRuntime: async () => {
+      started = true;
+    },
+  });
+
+  assert.equal(exitCode, 1);
+  assert.equal(started, false);
+  assert.equal(stderr.read(), "codex-web: Invalid port: 65536\n");
+});
+
+test("deploy builds and installs a user service with network options", async () => {
+  const stdout = capture();
+  const stderr = capture();
+  const buildCalls = [];
+  const deployCalls = [];
+
+  const exitCode = await run(
+    ["deploy", "--host=192.0.2.10", "--port=8443"],
+    {
+      stdout: stdout.stream,
+      stderr: stderr.stream,
+      build: async options => {
+        buildCalls.push(options);
+        return { outputRoot: "/tmp/output", warning: null };
+      },
+      deploy: async options => {
+        deployCalls.push(options);
+        return {
+          servicePath: "/tmp/codex-web.service",
+          url: "http://192.0.2.10:8443/?cap=fixture",
+        };
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(buildCalls.length, 1);
+  assert.equal(buildCalls[0].dmgPath, undefined);
+  assert.deepEqual(deployCalls, [
+    {
+      projectRoot: buildCalls[0].root,
+      host: "192.0.2.10",
+      port: 8443,
+    },
+  ]);
+  assert.ok(stdout.read().includes("Installed /tmp/codex-web.service"));
+  assert.ok(stdout.read().includes("Open http://192.0.2.10:8443"));
+  assert.match(stderr.read(), /non-loopback HTTP/);
+});

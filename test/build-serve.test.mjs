@@ -183,6 +183,36 @@ test("build and serve the patched upstream interface", async (context) => {
   });
   assert.equal(missing.status, 404);
   assert.doesNotMatch(await missing.text(), /upstream interface/);
+
+  const wildcardServer = await startWebServer({
+    appRoot: result.outputRoot,
+    host: "0.0.0.0",
+    port: 0,
+    capability: "wildcard-fixture",
+  });
+  context.after(() => wildcardServer.close());
+  const remoteUrl = new URL(wildcardServer.url);
+  remoteUrl.hostname = "127.0.0.1";
+  const remoteCapability = await fetch(remoteUrl, { redirect: "manual" });
+  assert.equal(remoteCapability.status, 303);
+  assert.equal(
+    wildcardServer.isRequestOriginAllowed({
+      headers: {
+        host: remoteUrl.host,
+        origin: remoteUrl.origin,
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    wildcardServer.isRequestOriginAllowed({
+      headers: {
+        host: remoteUrl.host,
+        origin: "http://attacker.invalid",
+      },
+    }),
+    false,
+  );
 });
 
 test("a failed build preserves the current generated application", async (context) => {

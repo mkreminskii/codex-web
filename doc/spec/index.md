@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: SPEC-2
+  revision: SPEC-3
   files: []
 ---
 
@@ -26,14 +26,28 @@ Acceptance:
 
 ## REQ-UI-001 — Serve the upstream interface
 
-The running wrapper shall serve the extracted upstream Codex interface to a Chromium-family browser on the same host.
+The running wrapper shall serve the extracted upstream Codex interface to a Chromium-family browser that can reach the configured Linux host.
 
 Acceptance:
 
-- The start entry point reports its loopback URL.
+- The start entry point reports its capability URL.
 - Opening that URL renders the upstream Codex interface without a replacement application shell.
-- The service does not listen on a non-loopback address in the first draft.
+- The service binds to `127.0.0.1` and a random available port by default.
+- Explicit `--host` and `--port` options override both listener values.
+- Invalid host, port, Host header, origin, or capability values fail without opening an unauthenticated browser path.
 - A browser request for an unknown application asset does not return the main HTML document as false success.
+
+## REQ-DEPLOY-001 — Automate single-user deployment
+
+The deployment entry point shall build the wrapper and install a user-level systemd service with the selected host and port.
+
+Acceptance:
+
+- The deployment entry point performs a current wrapper build before service installation.
+- The generated service invokes the same serve entry point with the selected host and port.
+- The installer does not replace a systemd unit that it does not own.
+- The deployment entry point enables and restarts the user service.
+- The deployment entry point reports the capability URL emitted by the started service.
 
 ## REQ-BRIDGE-001 — Preserve the upstream Codex authority
 
@@ -70,6 +84,6 @@ Acceptance:
 
 ## Requirement coverage
 
-Current must-have requirements: `REQ-BUILD-001`, `REQ-UI-001`, `REQ-BRIDGE-001`, `REQ-APPROVAL-001`, and `REQ-FAIL-001`.
+Current must-have requirements: `REQ-BUILD-001`, `REQ-UI-001`, `REQ-DEPLOY-001`, `REQ-BRIDGE-001`, `REQ-APPROVAL-001`, and `REQ-FAIL-001`.
 
 There are no deferred requirements in this first-draft specification.

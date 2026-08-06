@@ -4,13 +4,13 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: ARCH-1
+  revision: ARCH-2
   files: []
 ---
 
 # codex-web architecture contracts
 
-The current implementation scope is defined by `REQ-BUILD-001`, `REQ-UI-001`, `REQ-BRIDGE-001`, `REQ-APPROVAL-001`, and `REQ-FAIL-001` in [the specification](../spec/index.md).
+The current implementation scope is defined by `REQ-BUILD-001`, `REQ-UI-001`, `REQ-DEPLOY-001`, `REQ-BRIDGE-001`, `REQ-APPROVAL-001`, and `REQ-FAIL-001` in [the specification](../spec/index.md).
 
 ## CTR-UPSTREAM-001 — Upstream payload boundary
 
@@ -42,15 +42,25 @@ The browser owns presentation state only.
 
 A browser disconnect never converts a pending approval into approval.
 
-## CTR-TRUST-001 — Local trust boundary
+## CTR-TRUST-001 — Browser trust boundary
 
-The runtime owner binds application and bridge endpoints only to loopback interfaces.
+The runtime owner binds application and bridge endpoints to loopback by default and accepts a non-loopback listener only through explicit host configuration.
 
-The runtime owner rejects cross-origin bridge connections and requires a per-launch browser capability.
+The runtime owner requires a per-launch browser capability and accepts browser WebSockets only when their Host and Origin values describe the same configured listener.
 
 The runtime owner validates workspace paths before it forwards them to the upstream authority.
 
 The wrapper does not expose the app-server socket or byte stream directly to untrusted network clients.
+
+## CTR-DEPLOY-001 — User-service deployment boundary
+
+The deployment owner builds the current generated wrapper before it changes service configuration.
+
+The deployment owner writes only its marked `codex-web.service` user unit and refuses to replace an unmarked unit.
+
+The generated unit invokes the ordinary serve entry point with explicit host and port values.
+
+The deployment owner uses the user systemd manager for reload, enable, restart, and current capability URL discovery.
 
 ## CTR-FAILURE-001 — Cross-boundary failure propagation
 

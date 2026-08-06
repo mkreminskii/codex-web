@@ -4,6 +4,12 @@ import { lstat, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
+import {
+  formatAuthority,
+  isWildcardHost,
+  normalizeHost,
+  normalizePort,
+} from "./network-options.mjs";
 const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -126,9 +132,8 @@ export async function startWebServer({
   if (appRoot === undefined) {
     throw new Error("A generated application root is required");
   }
-  if (host !== "127.0.0.1") {
-    throw new Error("The first draft can bind only to 127.0.0.1");
-  }
+  const normalizedHost = normalizeHost(host);
+  const normalizedPort = normalizePort(port);
 
   const resolvedAppRoot = await realpath(appRoot);
   const webviewRoot = await realpath(join(resolvedAppRoot, "upstream", "webview"));
@@ -142,11 +147,47 @@ export async function startWebServer({
   }
 
   let bootstrapPayload = null;
-  let expectedHost;
+  let listenerPort = null;
+  let listenerOrigin = null;
+
+  function requestOrigin(hostHeader) {
+    if (typeof hostHeader !== "string" || listenerPort === null) {
+      return null;
+    }
+
+    let candidate;
+    try {
+      candidate = new URL(`http://${hostHeader}`);
+    } catch {
+      return null;
+    }
+    if (
+      candidate.username !== "" ||
+      candidate.password !== "" ||
+      candidate.pathname !== "/" ||
+      candidate.search !== "" ||
+      candidate.hash !== ""
+    ) {
+      return null;
+    }
+
+    const candidatePort = candidate.port === "" ? 80 : Number(candidate.port);
+    if (candidatePort !== listenerPort) {
+      return null;
+    }
+    if (
+      !isWildcardHost(normalizedHost) &&
+      candidate.hostname !== new URL(listenerOrigin).hostname
+    ) {
+      return null;
+    }
+    return candidate.origin;
+  }
   const server = createServer(async (request, response) => {
     setSecurityHeaders(response);
 
-    if (request.headers.host !== expectedHost) {
+    const allowedRequestOrigin = requestOrigin(request.headers.host);
+    if (allowedRequestOrigin === null) {
       sendText(response, 421, "Unexpected Host header");
       return;
     }
@@ -156,7 +197,7 @@ export async function startWebServer({
       return;
     }
 
-    const url = new URL(request.url ?? "/", `http://${expectedHost}`);
+    const url = new URL(request.url ?? "/", allowedRequestOrigin);
     const presentedCapability = url.searchParams.get("cap");
     if (
       presentedCapability !== null &&
@@ -202,7 +243,7 @@ export async function startWebServer({
 
   await new Promise((resolveListen, reject) => {
     server.once("error", reject);
-    server.listen(port, host, resolveListen);
+    server.listen(normalizedPort, normalizedHost, resolveListen);
   });
 
   const address = server.address();
@@ -210,11 +251,16 @@ export async function startWebServer({
     server.close();
     throw new Error("Could not determine the web server address");
   }
-  expectedHost = `${host}:${address.port}`;
+  listenerPort = address.port;
+  listenerOrigin = `http://${formatAuthority(normalizedHost, listenerPort)}`;
 
   return {
-    url: `http://${expectedHost}/?cap=${capability}`,
-    origin: `http://${expectedHost}`,
+    url: `${listenerOrigin}/?cap=${capability}`,
+    origin: listenerOrigin,
+    isRequestOriginAllowed(request) {
+      const allowedOrigin = requestOrigin(request.headers.host);
+      return allowedOrigin !== null && request.headers.origin === allowedOrigin;
+    },
     capability,
     httpServer: server,
     setBootstrap(value) {
