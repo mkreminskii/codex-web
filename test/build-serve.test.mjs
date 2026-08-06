@@ -127,6 +127,7 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.match(preloadSource, /CODEX_WEB_APP_SERVER_PROXY_PATH/);
   assert.match(preloadSource, /`app-server`,`--analytics-default-enabled`/);
   assert.doesNotMatch(preloadSource, /`app-server`,`proxy`/);
+  assert.doesNotMatch(preloadSource, /showContextMenu/);
   const rendererSource = await readFile(
     join(
       result.outputRoot,
@@ -198,6 +199,7 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.match(bridgeSource, /__codex_bootstrap/);
   assert.match(bridgeSource, /bootstrap\.sentryInitOptions/);
   assert.doesNotMatch(bridgeSource, /window\.prompt/);
+  assert.doesNotMatch(bridgeSource, /showContextMenu/);
   assert.doesNotMatch(bridgeSource, /workspace-root-option-picked/);
 
   const missing = await fetch(new URL("/missing", server.url), {

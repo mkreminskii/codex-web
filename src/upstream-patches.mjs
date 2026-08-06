@@ -227,7 +227,7 @@ const browserBridgeSource = String.raw`
     sendWorkerMessageFromView: (workerId, message) =>
       invoke("sendWorkerMessageFromView", [workerId, message]),
     subscribeToWorkerMessages,
-    showContextMenu: options => invoke("showContextMenu", [options]),
+    // The upstream renderer uses its web menu when this Electron-only method is absent.
     getFastModeRolloutMetrics: () => invoke("getFastModeRolloutMetrics"),
     getSharedObjectSnapshotValue: key => bootstrap.sharedObjectSnapshot[key],
     getInitialSidebarBootstrap: () => bootstrap.initialSidebarBootstrap,
@@ -266,7 +266,6 @@ function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
   const allowedMethods = [
     "sendMessageFromView",
     "sendWorkerMessageFromView",
-    "showContextMenu",
     "getFastModeRolloutMetrics",
     "triggerSentryTestError",
   ];
