@@ -6,6 +6,10 @@ Serve the current upstream Codex Desktop interface in a Chromium-family browser 
 
 The wrapper is a single-user service. It is not a replacement Codex client.
 
+## Screenshot
+
+<img width="1836" height="1119" alt="CleanShot 2026-08-07 at 02 15 40@2x" src="https://github.com/user-attachments/assets/8f8b7c1c-a0be-444c-b25c-e69563fa765e" />
+
 ## Requirements
 
 - Linux
