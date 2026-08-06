@@ -1,0 +1,23 @@
+{
+  "name": "codex-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "codex-web": "./src/cli.mjs"
+  },
+  "scripts": {
+    "check": "node --check src/build.mjs && node --check src/cli.mjs && node --check src/electron-runtime.mjs && node --check src/extract-build.mjs && node --check src/native-modules.mjs && node --check src/relay.mjs && node --check src/runtime-host.mjs && node --check src/serve.mjs && node --check src/upstream-patches.mjs && node --check src/web-runtime.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@electron/asar": "^4.2.1",
+    "@electron/get": "^5.1.0",
+    "@electron/rebuild": "^4.2.0",
+    "ws": "^8.21.2"
+  }
+}
+

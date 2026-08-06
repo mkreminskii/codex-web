@@ -1,0 +1,63 @@
+---
+pjdoc:
+  version: 1
+  kind: architecture
+  scope: root
+  status: draft
+  revision: ARCH-1
+  files: []
+---
+
+# codex-web architecture contracts
+
+The current implementation scope is defined by `REQ-BUILD-001`, `REQ-UI-001`, `REQ-BRIDGE-001`, `REQ-APPROVAL-001`, and `REQ-FAIL-001` in [the specification](../spec/index.md).
+
+## CTR-UPSTREAM-001 — Upstream payload boundary
+
+The build owner reads the authorized DMG and treats every extracted OpenAI file as generated input.
+
+Generated upstream files remain outside the source tree and outside distributable source archives.
+
+The build owner applies compatibility changes to a candidate output and promotes that candidate only after structural validation succeeds.
+
+The compatibility rules target only the current upstream layout specified by `doc/brief.md#supplied-constraints`.
+
+## CTR-BRIDGE-001 — Browser bridge boundary
+
+The build owner derives the browser-facing bridge surface from the current upstream preload and renderer bundles instead of defining a replacement product interface.
+
+The upstream Electron main-process bundle remains the application host. A compatibility patch redirects its renderer IPC boundary to a same-origin browser transport without creating a visible BrowserWindow.
+
+The runtime owner forwards Codex app-server messages without defining a second conversation protocol.
+
+Browser transport code depends on the derived bridge contract. Upstream extraction and app-server lifecycle code do not depend on browser presentation code.
+
+## CTR-AUTHORITY-001 — Process and data authority
+
+The patched upstream Electron main process owns the upstream Codex app-server child, its transport connection, and its shutdown.
+
+The upstream Codex app-server owns threads, turns, approval requests, and workspace operations.
+
+The browser owns presentation state only.
+
+A browser disconnect never converts a pending approval into approval.
+
+## CTR-TRUST-001 — Local trust boundary
+
+The runtime owner binds application and bridge endpoints only to loopback interfaces.
+
+The runtime owner rejects cross-origin bridge connections and requires a per-launch browser capability.
+
+The runtime owner validates workspace paths before it forwards them to the upstream authority.
+
+The wrapper does not expose the app-server socket or byte stream directly to untrusted network clients.
+
+## CTR-FAILURE-001 — Cross-boundary failure propagation
+
+The build owner reports extraction, discovery, patch, and validation failures before candidate promotion.
+
+The runtime owner reports child startup and transport failures to both the start entry point and the browser when each surface is available.
+
+The browser bridge returns named unsupported-operation errors for required Electron operations that have no browser adapter.
+
+No boundary converts a failed or unknown result into success.
