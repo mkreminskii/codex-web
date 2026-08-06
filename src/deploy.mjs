@@ -9,9 +9,16 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { appServerDaemonArguments } from "./runtime-host.mjs";
 
 const serviceName = "codex-web.service";
 const managedMarker = "# Managed by codex-web";
+const serviceEnvironmentNames = [
+  "PATH",
+  "CODEX_CLI_PATH",
+  "CODEX_APP_SERVER_CHATGPT_BASE_URL",
+  "CODEX_APP_SERVER_OPENAI_BASE_URL",
+];
 
 function quoteSystemdArgument(value) {
   if (/[\0\r\n]/.test(value)) {
@@ -45,7 +52,20 @@ export function createUserServiceUnit({
   ]
     .map(quoteSystemdArgument)
     .join(" ");
-  const environmentLines = ["PATH", "CODEX_CLI_PATH"]
+  const daemonExecutable = environment.CODEX_CLI_PATH?.trim();
+  const daemonCommand = [
+    "systemd-run",
+    "--user",
+    "--scope",
+    "--quiet",
+    "--collect",
+    "--",
+    ...(daemonExecutable ? [daemonExecutable] : ["/usr/bin/env", "codex"]),
+    ...appServerDaemonArguments(environment),
+  ]
+    .map(quoteSystemdArgument)
+    .join(" ");
+  const environmentLines = serviceEnvironmentNames
     .filter(name => environment[name])
     .map(name =>
       `Environment=${quoteSystemdArgument(`${name}=${environment[name]}`)}`,
@@ -60,10 +80,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-${environmentLines === "" ? "" : `${environmentLines}\n`}ExecStart=${command}
+${environmentLines === "" ? "" : `${environmentLines}\n`}ExecStartPre=${daemonCommand}
+ExecStart=${command}
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
+KillMode=control-group
 TimeoutStopSec=30
 
 [Install]

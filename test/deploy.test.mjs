@@ -19,6 +19,8 @@ test("creates a quoted user service command", () => {
     environment: {
       PATH: "/usr/bin:/opt/bin",
       CODEX_CLI_PATH: "/opt/bin/codex",
+      CODEX_APP_SERVER_CHATGPT_BASE_URL: "https://chatgpt.example/%tenant",
+      CODEX_APP_SERVER_OPENAI_BASE_URL: 'https://api.example/?label="primary"',
     },
   });
 
@@ -29,7 +31,29 @@ test("creates a quoted user service command", () => {
   assert.ok(unit.includes('"--public-url" "https://codex.example.com"'));
   assert.ok(unit.includes('Environment="PATH=/usr/bin:/opt/bin"'));
   assert.ok(unit.includes('Environment="CODEX_CLI_PATH=/opt/bin/codex"'));
+  assert.ok(
+    unit.includes(
+      'Environment="CODEX_APP_SERVER_CHATGPT_BASE_URL=https://chatgpt.example/%%tenant"',
+    ),
+  );
+  assert.ok(
+    unit.includes(
+      'Environment="CODEX_APP_SERVER_OPENAI_BASE_URL=https://api.example/?label=\\"primary\\""',
+    ),
+  );
+  assert.ok(
+    unit.includes(
+      'ExecStartPre="systemd-run" "--user" "--scope" "--quiet" "--collect" "--" "/opt/bin/codex"',
+    ),
+  );
+  assert.ok(
+    unit.includes(
+      '"chatgpt_base_url=\\"https://chatgpt.example/%%tenant\\""',
+    ),
+  );
   assert.match(unit, /Restart=on-failure/);
+  assert.match(unit, /KillMode=control-group/);
+  assert.doesNotMatch(unit, /KillMode=process/);
 });
 
 test("installs and starts a managed user service", async context => {

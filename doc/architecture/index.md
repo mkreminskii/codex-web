@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: ARCH-3
+  revision: ARCH-4
   files: []
 ---
 
@@ -34,9 +34,11 @@ Browser transport code depends on the derived bridge contract. Upstream extracti
 
 ## CTR-AUTHORITY-001 — Process and data authority
 
-The patched upstream Electron main process owns the upstream Codex app-server child, its transport connection, and its shutdown.
+The runtime owner ensures that the local Codex app-server daemon is available before it starts the upstream application host.
 
-The upstream Codex app-server owns threads, turns, approval requests, and workspace operations.
+The patched upstream Electron main process owns only its daemon proxy transport. It does not own or stop the daemon.
+
+The shared local Codex app-server daemon owns threads, turns, approval requests, workspace operations, and their durable process lifetime.
 
 The browser owns presentation state only.
 
@@ -59,8 +61,12 @@ The deployment owner builds the current generated wrapper before it changes serv
 The deployment owner writes only its marked `codex-web.service` user unit and refuses to replace an unmarked unit.
 
 The generated unit invokes the ordinary serve entry point with explicit host and port values.
+The generated unit starts or reuses the shared daemon in a transient systemd scope before it starts the serve process.
 
 The deployment owner uses the user systemd manager for reload, enable, restart, and current capability URL discovery.
+
+Restarting the user service replaces only the web adapter and its proxy transport. The shared daemon and active turns remain running.
+The generated unit uses control-group cleanup for the web adapter, Electron, and proxy processes after a service failure.
 
 ## CTR-FAILURE-001 — Cross-boundary failure propagation
 

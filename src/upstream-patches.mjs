@@ -435,6 +435,49 @@ function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
   })()`;
 }
 
+const appServerProxyMarker = "CODEX_WEB_APP_SERVER_PROXY";
+const appServerLaunchPattern =
+  /`app-server`\s*,\s*`--analytics-default-enabled`\s*\]\}/g;
+
+function patchAppServerTransport(source) {
+  if (source.includes(appServerProxyMarker)) {
+    return source;
+  }
+  const matches = [...source.matchAll(appServerLaunchPattern)];
+  if (matches.length !== 1) {
+    throw new Error(
+      `Expected one upstream local app-server launch, found ${matches.length}`,
+    );
+  }
+  return source.replace(
+    matches[0][0],
+    `/* ${appServerProxyMarker} */\`app-server\`,\`proxy\`]}`,
+  );
+}
+
+async function findAppServerTransportBundle(buildRoot, buildEntries) {
+  const candidates = [];
+  for (const name of buildEntries.filter(name => name.endsWith(".js"))) {
+    const path = join(buildRoot, name);
+    const source = await readFile(path, "utf8");
+    const launchCount = [...source.matchAll(appServerLaunchPattern)].length;
+    if (source.includes(appServerProxyMarker) || launchCount !== 0) {
+      candidates.push({ name, path, source });
+    }
+  }
+  if (candidates.length !== 1) {
+    throw new Error(
+      `Expected one upstream local app-server bundle, found ${candidates.length}`,
+    );
+  }
+  const [candidate] = candidates;
+  return {
+    name: candidate.name,
+    path: candidate.path,
+    source: patchAppServerTransport(candidate.source),
+  };
+}
+
 function patchPreload(source) {
   if (source.includes("CODEX_WEB_RELAY_URL")) {
     return source;
@@ -615,6 +658,7 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     );
   }
 
+  const appServerTransport = await findAppServerTransportBundle(buildRoot, buildEntries);
   const mainPath = join(buildRoot, mainCandidates[0]);
   const indexPath = join(webviewRoot, "index.html");
   const rendererPath = join(assetsRoot, rendererCandidates[0]);
@@ -637,10 +681,12 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     writeFile(indexPath, patchedIndex),
     writeFile(rendererPath, patchedRenderer),
     writeFile(bridgePath, browserBridgeSource),
+    writeFile(appServerTransport.path, appServerTransport.source),
   ]);
 
   return {
     mainBundle: mainCandidates[0],
+    appServerTransportBundle: appServerTransport.name,
     rendererBundle: rendererCandidates[0],
     browserBridge: "__codex_browser_bridge.js",
   };

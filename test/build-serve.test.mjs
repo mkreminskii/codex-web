@@ -77,6 +77,10 @@ async function createSyntheticDmg(root) {
     join(buildRoot, "main-fixture.js"),
     "let M,s,d,f,l={BrowserWindow:class{}};new l.BrowserWindow({backgroundColor:M,show:s,parent:d,...f===void 0?{}:{focusable:f},webPreferences:{}});\n",
   );
+  await writeFile(
+    join(buildRoot, "src-fixture.js"),
+    "function DB(){return[...x,`app-server`,`--analytics-default-enabled`]}\n",
+  );
   await createPackage(appSource, join(resourcesRoot, "app.asar"));
 
   const dmgPath = join(root, "Codex.dmg");
@@ -127,6 +131,13 @@ test("build and serve the patched upstream interface", async (context) => {
     ),
     /CODEX_WEB_HEADLESS/,
   );
+  const appServerTransportSource = await readFile(
+    join(result.outputRoot, "upstream", ".vite", "build", "src-fixture.js"),
+    "utf8",
+  );
+  assert.match(appServerTransportSource, /CODEX_WEB_APP_SERVER_PROXY/);
+  assert.match(appServerTransportSource, /`app-server`,`proxy`/);
+  assert.doesNotMatch(appServerTransportSource, /--analytics-default-enabled/);
   const rendererSource = await readFile(
     join(
       result.outputRoot,

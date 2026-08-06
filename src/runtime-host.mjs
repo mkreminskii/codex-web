@@ -34,19 +34,124 @@ async function resolveCodexCli(environment) {
   );
 }
 
+const appServerUrlOverrides = [
+  ["CODEX_APP_SERVER_CHATGPT_BASE_URL", "chatgpt_base_url"],
+  ["CODEX_APP_SERVER_OPENAI_BASE_URL", "openai_base_url"],
+];
+
+function collectOutput(child) {
+  const output = [];
+  let outputLength = 0;
+  for (const stream of [child.stdout, child.stderr]) {
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk) => {
+      output.push(chunk);
+      outputLength += chunk.length;
+      while (outputLength > 128 * 1024) {
+        outputLength -= output.shift().length;
+      }
+    });
+  }
+  return () => output.join("").trim();
+}
+
+export function appServerDaemonArguments(environment) {
+  const arguments_ = ["-c", "features.code_mode_host=true"];
+  for (const [environmentName, configKey] of appServerUrlOverrides) {
+    const value = environment[environmentName]?.trim();
+    if (value) {
+      arguments_.push("-c", `${configKey}=${JSON.stringify(value)}`);
+    }
+  }
+  arguments_.push("app-server", "daemon", "start");
+  return arguments_;
+}
+
+async function ensureAppServerDaemon({
+  codexCliPath,
+  environment,
+  spawnProcess,
+  timeoutMs,
+  terminationGraceMs,
+}) {
+  const arguments_ = appServerDaemonArguments(environment);
+  const child = spawnProcess(codexCliPath, arguments_, {
+    env: environment,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const output = collectOutput(child);
+  let timedOut = false;
+  let finalDeadlineExpired = false;
+  let timeout;
+  let terminationTimeout;
+  let finalDeadline;
+  const result = await new Promise((resolve, reject) => {
+    child.once("error", error => {
+      if (!finalDeadlineExpired) {
+        reject(error);
+      }
+    });
+    child.once("close", (code, signal) => {
+      if (!finalDeadlineExpired) {
+        resolve({ code, signal });
+      }
+    });
+    timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      terminationTimeout = setTimeout(() => {
+        child.kill("SIGKILL");
+        finalDeadline = setTimeout(() => {
+          finalDeadlineExpired = true;
+          child.stdout.destroy();
+          child.stderr.destroy();
+          child.unref?.();
+          resolve({ code: null, signal: "SIGKILL" });
+        }, terminationGraceMs);
+      }, terminationGraceMs);
+    }, timeoutMs);
+  }).finally(() => {
+    clearTimeout(timeout);
+    clearTimeout(terminationTimeout);
+    clearTimeout(finalDeadline);
+  });
+  const detail = output();
+  if (timedOut) {
+    throw new Error(
+      `Could not start or reuse the Codex app-server daemon (timed out after ${timeoutMs} ms)${detail === "" ? "" : `: ${detail}`}`,
+    );
+  }
+  if (result.code !== 0) {
+    const status =
+      result.code === null ? `signal ${result.signal}` : `code ${result.code}`;
+    throw new Error(
+      `Could not start or reuse the Codex app-server daemon (${status})${detail === "" ? "" : `: ${detail}`}`,
+    );
+  }
+}
+
 export async function startApplicationHost({
   appRoot,
   relayUrl,
   rendererUrl,
   environment = process.env,
+  spawnProcess = spawn,
+  daemonStartTimeoutMs = 10_000,
+  daemonTerminationGraceMs = 1_000,
 }) {
   const electronPath = join(appRoot, "runtime", "electron");
   const upstreamRoot = join(appRoot, "upstream");
   await requireExecutable(electronPath);
   const codexCliPath = await resolveCodexCli(environment);
+  await ensureAppServerDaemon({
+    codexCliPath,
+    environment,
+    spawnProcess,
+    timeoutMs: daemonStartTimeoutMs,
+    terminationGraceMs: daemonTerminationGraceMs,
+  });
 
-  const output = [];
-  const child = spawn(
+  const child = spawnProcess(
     electronPath,
     [
       "--no-sandbox",
@@ -67,16 +172,7 @@ export async function startApplicationHost({
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
-
-  for (const stream of [child.stdout, child.stderr]) {
-    stream.setEncoding("utf8");
-    stream.on("data", (chunk) => {
-      output.push(chunk);
-      while (output.join("").length > 128 * 1024) {
-        output.shift();
-      }
-    });
-  }
+  const output = collectOutput(child);
 
   let settled = false;
   const exited = new Promise((resolveExit, rejectExit) => {
@@ -89,24 +185,28 @@ export async function startApplicationHost({
       resolveExit({
         code,
         signal,
-        output: output.join("").trim(),
+        output: output(),
       });
     });
   });
 
   return {
     exited,
-    output: () => output.join("").trim(),
+    output,
     async stop() {
       if (settled) {
         await exited;
         return;
       }
       child.kill("SIGTERM");
+      let stopTimeout;
       await Promise.race([
         exited,
-        new Promise(resolveTimeout => setTimeout(resolveTimeout, 5_000)),
+        new Promise(resolveTimeout => {
+          stopTimeout = setTimeout(resolveTimeout, 5_000);
+        }),
       ]);
+      clearTimeout(stopTimeout);
       if (!settled) {
         child.kill("SIGKILL");
       }
@@ -114,4 +214,3 @@ export async function startApplicationHost({
     },
   };
 }
-

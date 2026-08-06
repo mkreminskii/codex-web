@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: SPEC-4
+  revision: SPEC-5
   files: []
 ---
 
@@ -59,15 +59,19 @@ Acceptance:
 - The generated service invokes the same serve entry point with the selected host and port.
 - The installer does not replace a systemd unit that it does not own.
 - The deployment entry point enables and restarts the user service.
+- Restarting the user service does not stop or replace the shared Codex app-server daemon.
+- A service host failure stops abandoned Electron and proxy processes without stopping the shared daemon.
 - The deployment entry point reports the capability URL emitted by the started service.
 
 ## REQ-BRIDGE-001 — Preserve the upstream Codex authority
 
-The browser compatibility bridge shall connect the upstream interface to the upstream Codex app-server authority.
+The browser compatibility bridge shall connect the upstream interface to the shared local Codex app-server daemon.
 
 Acceptance:
 
 - The interface can select one existing local workspace through its upstream workspace flow.
+- The runtime starts the local daemon when necessary and connects the upstream application through the daemon control-socket proxy.
+- Existing active local sessions and newly created local sessions appear through the shared daemon.
 - The interface can start one thread and submit one prompt.
 - Response items appear incrementally in the upstream interface.
 - The completed response remains visible in that thread.
