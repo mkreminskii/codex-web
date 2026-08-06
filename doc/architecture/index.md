@@ -36,7 +36,7 @@ Browser transport code depends on the derived bridge contract. Upstream extracti
 
 The runtime owner ensures that the local Codex app-server daemon is available before it starts the upstream application host.
 
-The patched upstream Electron main process owns only its daemon proxy transport. It does not own or stop the daemon.
+The patched upstream Electron main process owns only its local WebSocket proxy transport. It does not own or stop the daemon.
 
 The shared local Codex app-server daemon owns threads, turns, approval requests, workspace operations, and their durable process lifetime.
 
@@ -62,6 +62,7 @@ The deployment owner writes only its marked `codex-web.service` user unit and re
 
 The generated unit invokes the ordinary serve entry point with explicit host and port values.
 The generated unit starts or reuses the shared daemon in a transient systemd scope before it starts the serve process.
+The generated unit sets the upstream build flavor to `prod` explicitly.
 
 The deployment owner uses the user systemd manager for reload, enable, restart, and current capability URL discovery.
 

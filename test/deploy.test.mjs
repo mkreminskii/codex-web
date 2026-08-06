@@ -19,6 +19,8 @@ test("creates a quoted user service command", () => {
     environment: {
       PATH: "/usr/bin:/opt/bin",
       CODEX_CLI_PATH: "/opt/bin/codex",
+      CODEX_HOME: "/srv/codex home",
+      BUILD_FLAVOR: "dev",
       CODEX_APP_SERVER_CHATGPT_BASE_URL: "https://chatgpt.example/%tenant",
       CODEX_APP_SERVER_OPENAI_BASE_URL: 'https://api.example/?label="primary"',
     },
@@ -31,6 +33,9 @@ test("creates a quoted user service command", () => {
   assert.ok(unit.includes('"--public-url" "https://codex.example.com"'));
   assert.ok(unit.includes('Environment="PATH=/usr/bin:/opt/bin"'));
   assert.ok(unit.includes('Environment="CODEX_CLI_PATH=/opt/bin/codex"'));
+  assert.ok(unit.includes('Environment="CODEX_HOME=/srv/codex home"'));
+  assert.ok(unit.includes('Environment="BUILD_FLAVOR=prod"'));
+  assert.doesNotMatch(unit, /Environment="BUILD_FLAVOR=dev"/);
   assert.ok(
     unit.includes(
       'Environment="CODEX_APP_SERVER_CHATGPT_BASE_URL=https://chatgpt.example/%%tenant"',

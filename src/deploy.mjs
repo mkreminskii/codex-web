@@ -16,6 +16,7 @@ const managedMarker = "# Managed by codex-web";
 const serviceEnvironmentNames = [
   "PATH",
   "CODEX_CLI_PATH",
+  "CODEX_HOME",
   "CODEX_APP_SERVER_CHATGPT_BASE_URL",
   "CODEX_APP_SERVER_OPENAI_BASE_URL",
 ];
@@ -65,12 +66,14 @@ export function createUserServiceUnit({
   ]
     .map(quoteSystemdArgument)
     .join(" ");
-  const environmentLines = serviceEnvironmentNames
-    .filter(name => environment[name])
-    .map(name =>
-      `Environment=${quoteSystemdArgument(`${name}=${environment[name]}`)}`,
-    )
-    .join("\n");
+  const environmentLines = [
+    `Environment=${quoteSystemdArgument("BUILD_FLAVOR=prod")}`,
+    ...serviceEnvironmentNames
+      .filter(name => environment[name])
+      .map(name =>
+        `Environment=${quoteSystemdArgument(`${name}=${environment[name]}`)}`,
+      ),
+  ].join("\n");
 
   return `${managedMarker}
 [Unit]
@@ -80,7 +83,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-${environmentLines === "" ? "" : `${environmentLines}\n`}ExecStartPre=${daemonCommand}
+${environmentLines}\nExecStartPre=${daemonCommand}
 ExecStart=${command}
 Restart=on-failure
 RestartSec=5

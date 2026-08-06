@@ -14,7 +14,7 @@ The wrapper is a single-user service. It is not a replacement Codex client.
 - `7z`
 - Python 3 and a native build toolchain
 - Electron runtime libraries
-- An installed `codex` CLI with the `app-server daemon` and `app-server proxy` commands, available through `PATH` or `CODEX_CLI_PATH`
+- An installed `codex` CLI with the `app-server daemon` command, available through `PATH` or `CODEX_CLI_PATH`
 
 Do not commit or redistribute `dist/` or `work/`. These directories contain downloaded or extracted upstream application files.
 
@@ -89,10 +89,11 @@ The deployment command performs these operations:
 4. Enable and restart `codex-web.service`.
 5. Read and print the capability URL from the user journal.
 
-The service starts or reuses the local Codex app-server daemon in a separate transient systemd scope. The upstream application connects through `codex app-server proxy`.
+The service starts or reuses the local Codex app-server daemon in a separate transient systemd scope. A local WebSocket proxy connects the upstream application to the daemon control socket.
 
 Restarting or stopping `codex-web.service` does not stop the shared daemon or its active work.
 A service failure removes abandoned Electron and proxy processes before systemd restarts the web adapter.
+The generated service sets the upstream build flavor to `prod` explicitly.
 
 Deploy on loopback:
 

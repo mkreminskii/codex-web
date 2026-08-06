@@ -71,15 +71,15 @@ async function createSyntheticDmg(root) {
   );
   await writeFile(
     join(buildRoot, "preload.js"),
-    '"use strict";var e=require("electron"),k=e.ipcRenderer.sendSync(`codex_desktop:get-shared-object-snapshot`)??{},B={getSharedObjectSnapshotValue:t=>k[t]};e.contextBridge.exposeInMainWorld(`electronBridge`,B);\n',
+    [
+      '"use strict";var e=require("electron"),k=e.ipcRenderer.sendSync(`codex_desktop:get-shared-object-snapshot`)??{},B={getSharedObjectSnapshotValue:t=>k[t]};e.contextBridge.exposeInMainWorld(`electronBridge`,B);\n',
+      "function vB(e){let n=TB({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath});if(!n)return null;let r={...process.env,LOG_FORMAT:`json`};return{executablePath:n.executablePath,args:n.args,env:r}}\n",
+      "function DB(){return[...x,`app-server`,`--analytics-default-enabled`]}\n",
+    ].join(""),
   );
   await writeFile(
     join(buildRoot, "main-fixture.js"),
     "let M,s,d,f,l={BrowserWindow:class{}};new l.BrowserWindow({backgroundColor:M,show:s,parent:d,...f===void 0?{}:{focusable:f},webPreferences:{}});\n",
-  );
-  await writeFile(
-    join(buildRoot, "src-fixture.js"),
-    "function DB(){return[...x,`app-server`,`--analytics-default-enabled`]}\n",
   );
   await createPackage(appSource, join(resourcesRoot, "app.asar"));
 
@@ -110,20 +110,12 @@ test("build and serve the patched upstream interface", async (context) => {
     await readFile(join(result.outputRoot, "upstream", "webview", "index.html"), "utf8"),
     /__codex_browser_bridge\.js/,
   );
-  assert.match(
-    await readFile(
-      join(result.outputRoot, "upstream", ".vite", "build", "preload.js"),
-      "utf8",
-    ),
-    /CODEX_WEB_RELAY_URL/,
+  const preloadSource = await readFile(
+    join(result.outputRoot, "upstream", ".vite", "build", "preload.js"),
+    "utf8",
   );
-  assert.match(
-    await readFile(
-      join(result.outputRoot, "upstream", ".vite", "build", "preload.js"),
-      "utf8",
-    ),
-    /codex_desktop:connect-app-host/,
-  );
+  assert.match(preloadSource, /CODEX_WEB_RELAY_URL/);
+  assert.match(preloadSource, /codex_desktop:connect-app-host/);
   assert.match(
     await readFile(
       join(result.outputRoot, "upstream", ".vite", "build", "main-fixture.js"),
@@ -131,13 +123,10 @@ test("build and serve the patched upstream interface", async (context) => {
     ),
     /CODEX_WEB_HEADLESS/,
   );
-  const appServerTransportSource = await readFile(
-    join(result.outputRoot, "upstream", ".vite", "build", "src-fixture.js"),
-    "utf8",
-  );
-  assert.match(appServerTransportSource, /CODEX_WEB_APP_SERVER_PROXY/);
-  assert.match(appServerTransportSource, /`app-server`,`proxy`/);
-  assert.doesNotMatch(appServerTransportSource, /--analytics-default-enabled/);
+  assert.match(preloadSource, /CODEX_WEB_APP_SERVER_PROXY/);
+  assert.match(preloadSource, /CODEX_WEB_APP_SERVER_PROXY_PATH/);
+  assert.match(preloadSource, /`app-server`,`--analytics-default-enabled`/);
+  assert.doesNotMatch(preloadSource, /`app-server`,`proxy`/);
   const rendererSource = await readFile(
     join(
       result.outputRoot,

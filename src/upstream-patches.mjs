@@ -438,20 +438,34 @@ function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
 const appServerProxyMarker = "CODEX_WEB_APP_SERVER_PROXY";
 const appServerLaunchPattern =
   /`app-server`\s*,\s*`--analytics-default-enabled`\s*\]\}/g;
+const appServerCommandPattern =
+  /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\((\{hostConfig:([A-Za-z_$][\w$]*)\.hostConfig,repoRoot:\4\.repoRoot,resourcesPath:\4\.resourcesPath\})\);(?=if\(!\1\)return null;let [A-Za-z_$][\w$]*=\{\.\.\.process\.env,LOG_FORMAT:`json`)/g;
 
 function patchAppServerTransport(source) {
   if (source.includes(appServerProxyMarker)) {
     return source;
   }
-  const matches = [...source.matchAll(appServerLaunchPattern)];
-  if (matches.length !== 1) {
+  const launchMatches = [...source.matchAll(appServerLaunchPattern)];
+  if (launchMatches.length !== 1) {
     throw new Error(
-      `Expected one upstream local app-server launch, found ${matches.length}`,
+      `Expected one upstream local app-server launch, found ${launchMatches.length}`,
     );
   }
-  return source.replace(
-    matches[0][0],
-    `/* ${appServerProxyMarker} */\`app-server\`,\`proxy\`]}`,
+  const commandMatches = [...source.matchAll(appServerCommandPattern)];
+  if (commandMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream local app-server command, found ${commandMatches.length}`,
+    );
+  }
+
+  const [command, configAlias, resolverAlias, optionsSource] = commandMatches[0];
+  const markedSource = source.replace(
+    launchMatches[0][0],
+    `/* ${appServerProxyMarker} */${launchMatches[0][0]}`,
+  );
+  return markedSource.replace(
+    command,
+    `let ${configAlias}=process.env.CODEX_WEB_APP_SERVER_PROXY_PATH?{executablePath:process.env.CODEX_WEB_APP_SERVER_PROXY_PATH,args:[]}:${resolverAlias}(${optionsSource});`,
   );
 }
 
@@ -474,7 +488,7 @@ async function findAppServerTransportBundle(buildRoot, buildEntries) {
   return {
     name: candidate.name,
     path: candidate.path,
-    source: patchAppServerTransport(candidate.source),
+    source: candidate.source,
   };
 }
 
@@ -665,15 +679,27 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
   const bridgePath = join(webviewRoot, "__codex_browser_bridge.js");
 
   const [preload, mainProcess, index, renderer] = await Promise.all([
-    readFile(preloadPath, "utf8"),
-    readFile(mainPath, "utf8"),
+    appServerTransport.path === preloadPath
+      ? appServerTransport.source
+      : readFile(preloadPath, "utf8"),
+    appServerTransport.path === mainPath
+      ? appServerTransport.source
+      : readFile(mainPath, "utf8"),
     readFile(indexPath, "utf8"),
     readFile(rendererPath, "utf8"),
   ]);
-  const patchedPreload = patchPreload(preload);
-  const patchedMainProcess = patchMainProcess(mainProcess);
+  let patchedPreload = patchPreload(preload);
+  let patchedMainProcess = patchMainProcess(mainProcess);
   const patchedIndex = patchWebviewIndex(index);
   const patchedRenderer = patchWebviewRenderer(renderer);
+  let patchedAppServerTransport = null;
+  if (appServerTransport.path === preloadPath) {
+    patchedPreload = patchAppServerTransport(patchedPreload);
+  } else if (appServerTransport.path === mainPath) {
+    patchedMainProcess = patchAppServerTransport(patchedMainProcess);
+  } else {
+    patchedAppServerTransport = patchAppServerTransport(appServerTransport.source);
+  }
 
   await Promise.all([
     writeFile(preloadPath, patchedPreload),
@@ -681,7 +707,9 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     writeFile(indexPath, patchedIndex),
     writeFile(rendererPath, patchedRenderer),
     writeFile(bridgePath, browserBridgeSource),
-    writeFile(appServerTransport.path, appServerTransport.source),
+    ...(patchedAppServerTransport === null
+      ? []
+      : [writeFile(appServerTransport.path, patchedAppServerTransport)]),
   ]);
 
   return {

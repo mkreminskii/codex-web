@@ -59,6 +59,7 @@ test("reuses the app-server daemon through the upstream proxy", async context =>
   const calls = [];
   const environment = {
     CODEX_CLI_PATH: codexCliPath,
+    CODEX_HOME: join(root, "codex home "),
     CODEX_APP_SERVER_CHATGPT_BASE_URL: "https://chatgpt.example",
     CODEX_APP_SERVER_OPENAI_BASE_URL: "https://api.example",
   };
@@ -91,12 +92,41 @@ test("reuses the app-server daemon through the upstream proxy", async context =>
     "start",
   ]);
   assert.equal(calls[0].command, codexCliPath);
+  assert.equal(calls[0].options.env.CODEX_HOME, environment.CODEX_HOME);
   assert.equal(calls[1].command, electronPath);
   assert.equal(calls[1].options.env.CODEX_CLI_PATH, codexCliPath);
+  assert.match(
+    calls[1].options.env.CODEX_WEB_APP_SERVER_PROXY_PATH,
+    /src\/app-server-proxy\.mjs$/,
+  );
+  assert.equal(
+    calls[1].options.env.CODEX_WEB_APP_SERVER_SOCKET_PATH,
+    join(environment.CODEX_HOME, "app-server-control", "app-server-control.sock"),
+  );
 
   await host.stop();
   assert.deepEqual(electronChild.signals, ["SIGTERM"]);
   assert.deepEqual(daemonChild.signals, []);
+});
+
+test("rejects a relative CODEX_HOME before starting a process", async context => {
+  const { codexCliPath, root } = await createApplicationRoot(context);
+
+  await assert.rejects(
+    startApplicationHost({
+      appRoot: root,
+      relayUrl: "ws://127.0.0.1/relay",
+      rendererUrl: "http://127.0.0.1/renderer",
+      environment: {
+        CODEX_CLI_PATH: codexCliPath,
+        CODEX_HOME: "relative/codex-home",
+      },
+      spawnProcess() {
+        throw new Error("a process must not start");
+      },
+    }),
+    /CODEX_HOME must be an absolute path/,
+  );
 });
 
 test("does not start Electron when the app-server daemon is unavailable", async context => {

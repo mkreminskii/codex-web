@@ -1,6 +1,28 @@
 import { spawn } from "node:child_process";
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const appServerProxyPath = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "app-server-proxy.mjs",
+);
+
+function resolveCodexHome(environment) {
+  const configured = environment.CODEX_HOME;
+  if (configured === undefined || configured === "") {
+    return join(homedir(), ".codex");
+  }
+  if (!isAbsolute(configured)) {
+    throw new Error("CODEX_HOME must be an absolute path");
+  }
+  return configured;
+}
+
+function appServerSocketPath(codexHome) {
+  return join(codexHome, "app-server-control", "app-server-control.sock");
+}
 
 async function isExecutable(path) {
   const entry = await stat(path).catch(() => null);
@@ -142,10 +164,13 @@ export async function startApplicationHost({
   const electronPath = join(appRoot, "runtime", "electron");
   const upstreamRoot = join(appRoot, "upstream");
   await requireExecutable(electronPath);
-  const codexCliPath = await resolveCodexCli(environment);
+  await requireExecutable(appServerProxyPath);
+  const codexHome = resolveCodexHome(environment);
+  const hostEnvironment = { ...environment, CODEX_HOME: codexHome };
+  const codexCliPath = await resolveCodexCli(hostEnvironment);
   await ensureAppServerDaemon({
     codexCliPath,
-    environment,
+    environment: hostEnvironment,
     spawnProcess,
     timeoutMs: daemonStartTimeoutMs,
     terminationGraceMs: daemonTerminationGraceMs,
@@ -162,8 +187,10 @@ export async function startApplicationHost({
     ],
     {
       env: {
-        ...environment,
+        ...hostEnvironment,
         CODEX_CLI_PATH: codexCliPath,
+        CODEX_WEB_APP_SERVER_PROXY_PATH: appServerProxyPath,
+        CODEX_WEB_APP_SERVER_SOCKET_PATH: appServerSocketPath(codexHome),
         CODEX_WEB_HEADLESS: "1",
         CODEX_WEB_RELAY_URL: relayUrl,
         ELECTRON_RENDERER_URL: rendererUrl,
