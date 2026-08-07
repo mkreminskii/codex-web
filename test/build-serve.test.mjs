@@ -96,6 +96,35 @@ async function buildSyntheticWrapper(root, dmgPath) {
   });
 }
 
+async function createRemoteDmgFixture(dmgPath) {
+  const dmgBytes = await readFile(dmgPath);
+  const state = {
+    calls: [],
+    lastModified: "Thu, 06 Aug 2026 12:00:00 GMT",
+    revision: 1,
+  };
+
+  return {
+    state,
+    fetchImpl: async (_url, options = {}) => {
+      const method = options.method ?? "GET";
+      state.calls.push(method);
+      const response = new Response(method === "HEAD" ? null : dmgBytes, {
+        status: 200,
+        headers: {
+          "content-length": String(dmgBytes.length),
+          etag: `"fixture-${state.revision}"`,
+          "last-modified": state.lastModified,
+        },
+      });
+      Object.defineProperty(response, "url", {
+        value: `https://downloads.example.test/ChatGPT-${state.revision}.dmg`,
+      });
+      return response;
+    },
+  };
+}
+
 test("build and serve the patched upstream interface", async (context) => {
   const root = await mkdtemp(join(tmpdir(), "codex-web-test-"));
   context.after(() => rm(root, { recursive: true, force: true }));
@@ -307,4 +336,86 @@ test("a failed build preserves the current generated application", async (contex
   );
   assert.equal(await realpath(join(root, "dist", "current")), currentBefore);
   assert.equal(await realpath(working.outputRoot), currentBefore);
+});
+
+test("remote Last-Modified controls the DMG and extraction cache", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-web-cache-test-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+
+  const dmgPath = await createSyntheticDmg(root);
+  const remote = await createRemoteDmgFixture(dmgPath);
+  const buildRemote = () =>
+    buildWebWrapper({
+      root,
+      fetchImpl: remote.fetchImpl,
+      stageRuntime: stageSyntheticRuntime,
+    });
+
+  const first = await buildRemote();
+  assert.equal(first.manifest.sourceLastModified, remote.state.lastModified);
+  assert.deepEqual(remote.state.calls, ["HEAD", "GET"]);
+
+  const cacheMarker = join(
+    root,
+    "work",
+    "upstream",
+    "extracted",
+    "upstream",
+    "cache-marker.txt",
+  );
+  await writeFile(cacheMarker, "reused extraction\n");
+
+  remote.state.revision = 2;
+  const cached = await buildRemote();
+  assert.equal(
+    await readFile(join(cached.outputRoot, "upstream", "cache-marker.txt"), "utf8"),
+    "reused extraction\n",
+  );
+  assert.deepEqual(remote.state.calls, ["HEAD", "GET", "HEAD"]);
+
+  remote.state.revision = 3;
+  remote.state.lastModified = "Fri, 07 Aug 2026 12:00:00 GMT";
+  const refreshed = await buildRemote();
+  assert.equal(refreshed.manifest.sourceLastModified, remote.state.lastModified);
+  await assert.rejects(
+    readFile(join(refreshed.outputRoot, "upstream", "cache-marker.txt"), "utf8"),
+    error => error.code === "ENOENT",
+  );
+  assert.deepEqual(remote.state.calls, ["HEAD", "GET", "HEAD", "HEAD", "GET"]);
+
+  await writeFile(cacheMarker, "damaged extraction cache\n");
+  await writeFile(
+    join(root, "work", "upstream", "extracted", "metadata.json"),
+    "{invalid json\n",
+  );
+  remote.state.revision = 4;
+  const repaired = await buildRemote();
+  await assert.rejects(
+    readFile(join(repaired.outputRoot, "upstream", "cache-marker.txt"), "utf8"),
+    error => error.code === "ENOENT",
+  );
+  assert.deepEqual(
+    remote.state.calls,
+    ["HEAD", "GET", "HEAD", "HEAD", "GET", "HEAD", "GET"],
+  );
+});
+
+test("remote DMG inspection requires Last-Modified", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-web-cache-test-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+
+  await assert.rejects(
+    buildWebWrapper({
+      root,
+      fetchImpl: async () => {
+        const response = new Response(null, { status: 200 });
+        Object.defineProperty(response, "url", {
+          value: "https://downloads.example.test/ChatGPT.dmg",
+        });
+        return response;
+      },
+      stageRuntime: stageSyntheticRuntime,
+    }),
+    /no Last-Modified header/,
+  );
 });

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import {
-
+  cp,
   lstat,
   mkdir,
   mkdtemp,
@@ -57,57 +57,65 @@ async function hashFile(path) {
   return hash.digest("hex");
 }
 
-function remoteFingerprint(response) {
-  return {
-    url: response.url,
-    etag: response.headers.get("etag"),
-    lastModified: response.headers.get("last-modified"),
-    contentLength: response.headers.get("content-length"),
-  };
+function responseLastModified(response, action) {
+  const lastModified = response.headers.get("last-modified");
+  if (lastModified === null || lastModified.trim() === "") {
+    throw new Error(`The official DMG ${action} has no Last-Modified header`);
+  }
+  return lastModified;
 }
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
-async function downloadCurrentDmg(workRoot, fetchImpl) {
-  const cacheRoot = join(workRoot, "upstream");
-  const dmgPath = join(cacheRoot, "ChatGPT.dmg");
-  const metadataPath = join(cacheRoot, "ChatGPT.dmg.json");
-  await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
-
-  const headResponse = await fetchImpl(OFFICIAL_DMG_URL, {
+async function inspectCurrentDmg(fetchImpl) {
+  const response = await fetchImpl(OFFICIAL_DMG_URL, {
     method: "HEAD",
     redirect: "follow",
     signal: AbortSignal.timeout(30_000),
   });
-  if (!headResponse.ok || !headResponse.url.startsWith("https://")) {
-    throw new Error(
-      `Could not inspect the official DMG: HTTP ${headResponse.status}`,
-    );
+  if (!response.ok || !response.url.startsWith("https://")) {
+    throw new Error(`Could not inspect the official DMG: HTTP ${response.status}`);
+  }
+  return { lastModified: responseLastModified(response, "response") };
+}
+
+async function readCachedDmg(cacheRoot, freshness) {
+  const dmgPath = join(cacheRoot, "ChatGPT.dmg");
+  const metadataPath = join(cacheRoot, "ChatGPT.dmg.json");
+  if (!(await pathIsFile(dmgPath))) {
+    return null;
   }
 
-  const fingerprint = remoteFingerprint(headResponse);
-  if (
-    (fingerprint.etag === null &&
-      fingerprint.lastModified === null &&
-      fingerprint.contentLength === null)
-  ) {
-    throw new Error("The official DMG response has no freshness metadata");
-  }
-
-  if (await pathIsFile(dmgPath)) {
-    try {
-      const cached = await readJson(metadataPath);
-      if (JSON.stringify(cached) === JSON.stringify(fingerprint)) {
-        return dmgPath;
-      }
-    } catch {
-      // An incomplete cache is replaced below.
+  try {
+    const metadata = await readJson(metadataPath);
+    if (
+      metadata.schemaVersion !== 1 ||
+      metadata.lastModified !== freshness.lastModified ||
+      typeof metadata.sourceSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(metadata.sourceSha256)
+    ) {
+      return null;
     }
+    if ((await hashFile(dmgPath)) !== metadata.sourceSha256) {
+      return null;
+    }
+    return {
+      dmgPath,
+      lastModified: metadata.lastModified,
+      sourceSha256: metadata.sourceSha256,
+    };
+  } catch {
+    return null;
   }
+}
 
+async function downloadCurrentDmg(cacheRoot, fetchImpl, freshness) {
+  const dmgPath = join(cacheRoot, "ChatGPT.dmg");
+  const metadataPath = join(cacheRoot, "ChatGPT.dmg.json");
   const partPath = `${dmgPath}.part-${randomUUID()}`;
+
   try {
     const response = await fetchImpl(OFFICIAL_DMG_URL, {
       redirect: "follow",
@@ -115,6 +123,10 @@ async function downloadCurrentDmg(workRoot, fetchImpl) {
     });
     if (!response.ok || response.body === null || !response.url.startsWith("https://")) {
       throw new Error(`Could not download the official DMG: HTTP ${response.status}`);
+    }
+    const downloadedLastModified = responseLastModified(response, "download");
+    if (downloadedLastModified !== freshness.lastModified) {
+      throw new Error("The official DMG changed during download");
     }
 
     await pipeline(
@@ -125,27 +137,95 @@ async function downloadCurrentDmg(workRoot, fetchImpl) {
       throw new Error("The official DMG download was empty");
     }
 
+    const sourceSha256 = await hashFile(partPath);
     await rename(partPath, dmgPath);
-    await writeFile(metadataPath, `${JSON.stringify(fingerprint, null, 2)}\n`, {
-      mode: 0o600,
-    });
-    return dmgPath;
+    await writeFile(
+      metadataPath,
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          lastModified: freshness.lastModified,
+          sourceSha256,
+        },
+        null,
+        2,
+      )}\n`,
+      { mode: 0o600 },
+    );
+    return {
+      dmgPath,
+      lastModified: freshness.lastModified,
+      sourceSha256,
+    };
   } catch (error) {
     await rm(partPath, { force: true });
     throw error;
   }
 }
 
-async function resolveDmgPath(inputPath, workRoot, fetchImpl) {
-  if (inputPath === undefined) {
-    return downloadCurrentDmg(workRoot, fetchImpl);
-  }
+async function readExtractedCache(cacheRoot, source) {
+  const extractedRoot = join(cacheRoot, "extracted");
+  try {
+    const metadata = await readJson(join(extractedRoot, "metadata.json"));
+    if (
+      metadata.schemaVersion !== 1 ||
+      metadata.lastModified !== source.lastModified ||
+      metadata.sourceSha256 !== source.sourceSha256 ||
+      (metadata.warning !== null && typeof metadata.warning !== "string")
+    ) {
+      return null;
+    }
 
+    const upstreamRoot = join(extractedRoot, "upstream");
+    const application = await validateExtractedApp(upstreamRoot);
+    return { upstreamRoot, application, warning: metadata.warning };
+  } catch {
+    return null;
+  }
+}
+
+async function writeExtractedCache(cacheRoot, upstreamRoot, source, warning) {
+  const extractedRoot = join(cacheRoot, "extracted");
+  const partRoot = join(cacheRoot, `.extracted-part-${randomUUID()}`);
+
+  try {
+    await mkdir(partRoot, { mode: 0o700 });
+    await cp(upstreamRoot, join(partRoot, "upstream"), {
+      recursive: true,
+      force: true,
+    });
+    await writeFile(
+      join(partRoot, "metadata.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          lastModified: source.lastModified,
+          sourceSha256: source.sourceSha256,
+          warning,
+        },
+        null,
+        2,
+      )}\n`,
+      { mode: 0o600 },
+    );
+    await rm(extractedRoot, { recursive: true, force: true });
+    await rename(partRoot, extractedRoot);
+  } catch (error) {
+    await rm(partRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function resolveLocalDmg(inputPath) {
   const dmgPath = resolve(inputPath);
   if (!(await pathIsFile(dmgPath))) {
     throw new Error(`DMG is missing or unreadable: ${dmgPath}`);
   }
-  return dmgPath;
+  return {
+    dmgPath,
+    lastModified: null,
+    sourceSha256: await hashFile(dmgPath),
+  };
 }
 
 async function runSevenZip(dmgPath, extractRoot) {
@@ -228,6 +308,39 @@ async function validateExtractedApp(upstreamRoot) {
   };
 }
 
+async function extractDmgToUpstream(sourceDmg, extractRoot, upstreamRoot) {
+  await mkdir(extractRoot);
+  await mkdir(upstreamRoot, { recursive: true });
+
+  const sevenZip = await runSevenZip(sourceDmg, extractRoot);
+  const asarPath = await findUpstreamAsar(extractRoot);
+  if (sevenZip.exitCode !== 0 && !sevenZip.output.includes("Dangerous link path was ignored")) {
+    throw new Error(
+      `7z failed with exit code ${sevenZip.exitCode}: ${sevenZip.output.trim()}`,
+    );
+  }
+
+  const archiveFiles = listPackage(asarPath, { isPack: false });
+  if (!archiveFiles.includes("/webview/index.html")) {
+    throw new Error("Upstream ASAR layout changed: webview/index.html is absent");
+  }
+
+  extractAll(asarPath, upstreamRoot);
+  const unpackedRoot = `${asarPath}.unpacked`;
+  const unpackedEntry = await lstat(unpackedRoot).catch(() => null);
+  if (unpackedEntry?.isDirectory()) {
+    await cp(unpackedRoot, upstreamRoot, {
+      recursive: true,
+      force: true,
+    });
+  }
+
+  return {
+    application: await validateExtractedApp(upstreamRoot),
+    warning: sevenZip.exitCode === 0 ? null : sevenZip.output.trim(),
+  };
+}
+
 export async function promoteCandidate(candidateRoot, distRoot, buildId) {
   const buildsRoot = join(distRoot, "builds");
   const finalRoot = join(buildsRoot, buildId);
@@ -257,49 +370,66 @@ export async function extractWebWrapper({
   const upstreamRoot = join(candidateRoot, "upstream");
 
   try {
-    await mkdir(extractRoot);
-    await mkdir(upstreamRoot, { recursive: true });
+    await mkdir(candidateRoot, { recursive: true });
 
-    const sourceDmg = await resolveDmgPath(dmgPath, workRoot, fetchImpl);
-    const sourceSha256 = await hashFile(sourceDmg);
-    const sevenZip = await runSevenZip(sourceDmg, extractRoot);
-    const asarPath = await findUpstreamAsar(extractRoot);
+    let source;
+    let extraction;
+    if (dmgPath === undefined) {
+      const cacheRoot = join(workRoot, "upstream");
+      await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
 
-    if (sevenZip.exitCode !== 0 && !sevenZip.output.includes("Dangerous link path was ignored")) {
-      throw new Error(
-        `7z failed with exit code ${sevenZip.exitCode}: ${sevenZip.output.trim()}`,
+      const freshness = await inspectCurrentDmg(fetchImpl);
+      const cachedSource = await readCachedDmg(cacheRoot, freshness);
+      const cachedExtraction =
+        cachedSource === null
+          ? null
+          : await readExtractedCache(cacheRoot, cachedSource);
+
+      if (cachedSource !== null && cachedExtraction !== null) {
+        await cp(cachedExtraction.upstreamRoot, upstreamRoot, {
+          recursive: true,
+          force: true,
+        });
+        source = cachedSource;
+        extraction = cachedExtraction;
+      } else {
+        source = await downloadCurrentDmg(cacheRoot, fetchImpl, freshness);
+        extraction = await extractDmgToUpstream(
+          source.dmgPath,
+          extractRoot,
+          upstreamRoot,
+        );
+        await writeExtractedCache(
+          cacheRoot,
+          upstreamRoot,
+          source,
+          extraction.warning,
+        );
+      }
+    } else {
+      source = await resolveLocalDmg(dmgPath);
+      extraction = await extractDmgToUpstream(
+        source.dmgPath,
+        extractRoot,
+        upstreamRoot,
       );
     }
 
-    const archiveFiles = listPackage(asarPath, { isPack: false });
-    if (!archiveFiles.includes("/webview/index.html")) {
-      throw new Error("Upstream ASAR layout changed: webview/index.html is absent");
-    }
-
-    extractAll(asarPath, upstreamRoot);
-    const application = await validateExtractedApp(upstreamRoot);
     const manifest = {
       schemaVersion: 1,
       builtAt: new Date().toISOString(),
-      sourceSha256,
-      ...application,
+      sourceSha256: source.sourceSha256,
+      ...(source.lastModified === null
+        ? {}
+        : { sourceLastModified: source.lastModified }),
+      ...extraction.application,
     };
     await writeFile(
       join(candidateRoot, "manifest.json"),
       `${JSON.stringify(manifest, null, 2)}\n`,
     );
 
-    const unpackedRoot = `${asarPath}.unpacked`;
-    const unpackedEntry = await lstat(unpackedRoot).catch(() => null);
-    if (unpackedEntry?.isDirectory()) {
-      const { cp } = await import("node:fs/promises");
-      await cp(unpackedRoot, upstreamRoot, {
-        recursive: true,
-        force: true,
-      });
-    }
-
-    const buildId = `${sourceSha256.slice(0, 16)}-${Date.now()}`;
+    const buildId = `${source.sourceSha256.slice(0, 16)}-${Date.now()}`;
     const outputRoot =
       destination === undefined
         ? await promoteCandidate(candidateRoot, distRoot, buildId)
@@ -307,7 +437,7 @@ export async function extractWebWrapper({
     return {
       outputRoot,
       manifest,
-      warning: sevenZip.exitCode === 0 ? null : sevenZip.output.trim(),
+      warning: extraction.warning,
     };
   } catch (error) {
     await rm(candidateRoot, { recursive: true, force: true });
