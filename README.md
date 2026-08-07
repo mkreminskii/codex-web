@@ -6,20 +6,18 @@ Serve the current upstream Codex Desktop interface in a Chromium-family browser 
 
 The wrapper is a single-user service. It is not a replacement Codex client.
 
-## Remote telemetry
+## What's working
 
-The build removes these remote telemetry paths from the adapted application:
+* Chat and related features
+* Terminal, Files, Review
+* Right click context menu
+* "Choose project" file browser
 
-- Sentry renderer error reporting and its `sentry-ipc://` requests.
-- OpenTelemetry renderer trace exports that use the Sentry transport.
-- Statsig event logging, exposure logging, and SDK exception reports.
-- Segment structured product analytics.
-- Codex analytics submissions to `/wham/analytics-events/events`.
-- Codex app-server analytics, including an explicit user configuration that enables analytics.
+## Removed
 
-The app-server receives `-c analytics.enabled=false`. This command-line override has priority over `config.toml`.
-
-Statsig feature-configuration downloads remain enabled because application features use their results. Authentication and Codex API requests also remain enabled.
+* Show pet
+* Browser
+* Telemetry
 
 ## Screenshot
 
@@ -27,17 +25,14 @@ Statsig feature-configuration downloads remain enabled because application featu
 
 ## Requirements
 
-- Linux
-- Node.js 22 or later
-- npm
-- `7z`
-- Python 3 and a native build toolchain
-- Electron runtime libraries
-- An installed `codex` CLI with the `app-server daemon` command, available through `PATH` or `CODEX_CLI_PATH`
+* Linux with systemd user services
+* Node.js 22 or later, npm
+* `7z`
+* Python 3 and a native build toolchain
+* Electron runtime libraries
+* An installed `codex` CLI with the `app-server daemon` command, available through `PATH` or `CODEX_CLI_PATH`
 
-Do not commit or redistribute `dist/` or `work/`. These directories contain downloaded or extracted upstream application files.
-
-## Quick start
+## Quick Start
 
 Install the recorded dependencies:
 
@@ -45,62 +40,19 @@ Install the recorded dependencies:
 npm ci
 ```
 
-Build from the current official DMG:
+The deployment command downloads and builds the current upstream application. It writes `~/.config/systemd/user/codex-web.service`, reloads systemd, and enables and restarts the service.
+
+Deploy on the default loopback listener and a random available port:
 
 ```sh
-./src/cli.mjs build
+./src/cli.mjs deploy
 ```
 
-Start on the default loopback listener and a random available port:
+Open the complete capability URL printed by the command. The capability URL grants access to the service, so do not share it or store it in public logs.
 
-```sh
-./src/cli.mjs serve
-```
+## Deployment
 
-Open the complete capability URL printed by the command.
-
-## Listener options
-
-Set a specific listener host and port:
-
-```sh
-./src/cli.mjs serve --host 127.0.0.1 --port 4310
-```
-
-Both `--host VALUE` and `--host=VALUE` are accepted. The port option supports both forms.
-
-Port `0` selects a random available port. Valid explicit ports are from `1` through `65535`.
-
-Use `--public-url` when an HTTPS reverse proxy exposes `codex-web` at a public origin. The flag works with both `serve` and `deploy`.
-
-```sh
-./src/cli.mjs deploy \
-  --host 127.0.0.1 \
-  --port 4310 \
-  --public-url https://codex.example.com
-```
-
-`codex-web` continues to listen on the address from `--host` and `--port`. It uses the public origin for the reported browser URL and browser security checks.
-
-The value must be an HTTPS origin without credentials, a path, a query, or a fragment. The reverse proxy must terminate TLS, preserve the public `Host` and `Origin` headers, and support WebSocket upgrades.
-
-Both `--public-url VALUE` and `--public-url=VALUE` are accepted.
-
-A wildcard listener is supported:
-
-```sh
-./src/cli.mjs serve --host 0.0.0.0 --port 4310
-```
-
-Replace `0.0.0.0` in the reported URL with the reachable server address. Keep the port and capability unchanged.
-
-Non-loopback traffic uses plain HTTP. Use a trusted private network or an encrypted tunnel.
-
-The capability URL grants access to the service. Do not share it or store it in public logs.
-
-## Automated deployment
-
-The deployment command performs these operations:
+`deploy` performs these operations:
 
 1. Download and build the current upstream application.
 2. Write a managed user unit at `~/.config/systemd/user/codex-web.service`.
@@ -108,33 +60,21 @@ The deployment command performs these operations:
 4. Enable and restart `codex-web.service`.
 5. Read and print the capability URL from the user journal.
 
-The service starts or reuses the local Codex app-server daemon in a separate transient systemd scope. A local WebSocket proxy connects the upstream application to the daemon control socket.
-
-Restarting or stopping `codex-web.service` does not stop the shared daemon or its active work.
-A service failure removes abandoned Electron and proxy processes before systemd restarts the web adapter.
-The generated service sets the upstream build flavor to `prod` explicitly.
-
-Deploy on loopback:
-
-```sh
-./src/cli.mjs deploy --host 127.0.0.1 --port 4310
-```
-
-Deploy on a private network interface:
-
-```sh
-./src/cli.mjs deploy --host 192.168.1.20 --port 4310
-```
-
 The installer replaces only a unit marked as managed by `codex-web`. It refuses to replace an unrelated unit with the same name.
 
 The service runs as the current Linux user. That user must have access to the Codex configuration, CLI, and selected workspaces.
+
+The service starts or reuses the local Codex app-server daemon in a separate transient systemd scope. A local WebSocket proxy connects the application to the daemon control socket.
+
+Stopping or restarting `codex-web.service` does not stop the shared daemon or its active work. A service failure removes abandoned Electron and proxy processes before systemd restarts the web adapter.
+
+The generated service sets the upstream build flavor to `prod`.
 
 Inspect the service:
 
 ```sh
 systemctl --user status codex-web.service
-journalctl --user --unit codex-web.service --output=cat
+journalctl --user -feu codex-web.service -o cat
 ```
 
 Stop or restart the service:
@@ -144,19 +84,81 @@ systemctl --user stop codex-web.service
 systemctl --user restart codex-web.service
 ```
 
-## Remote browser access
+## Network access
 
-A loopback deployment can remain private behind SSH.
+Set a specific listener host and port:
 
-Start an SSH tunnel from the browser computer:
+```sh
+./src/cli.mjs deploy --host 127.0.0.1 --port 4310
+```
+
+Both `--host VALUE` and `--host=VALUE` are accepted. The `--port` and `--public-url` options support both forms.
+
+Port `0` selects a random available port. Valid explicit ports are from `1` through `65535`.
+
+Use `--public-url` when an HTTPS reverse proxy exposes `codex-web` at a public origin:
+
+```sh
+./src/cli.mjs deploy --host 127.0.0.1 --port 4310 --public-url https://codex.example.com
+```
+
+`codex-web` listens on the address from `--host` and `--port`. It uses the public origin for the reported browser URL and browser security checks.
+
+The public URL must be an HTTPS origin without credentials, a path, a query, or a fragment. The reverse proxy must preserve the public `Host` and `Origin` headers and support WebSocket upgrades.
+
+A wildcard or private-network listener is also supported:
+
+```sh
+./src/cli.mjs deploy --host 0.0.0.0 --port 4310
+./src/cli.mjs deploy --host 192.168.1.20 --port 4310
+```
+
+Replace `0.0.0.0` in the reported URL with the reachable server address. Keep the port and capability unchanged.
+
+Non-loopback traffic uses plain HTTP. Use a trusted private network or an encrypted tunnel.
+
+### SSH tunnel
+
+A loopback deployment can remain private behind SSH. Start a tunnel from the browser computer:
 
 ```sh
 ssh -N -L 4310:127.0.0.1:4310 USER@SERVER
 ```
 
-Then open the capability URL reported by the remote service.
+Open the capability URL reported by the remote service.
 
-## Validation
+## Manual session
+
+Build without installing a systemd service:
+
+```sh
+./src/cli.mjs build
+```
+
+Start the built application in the current terminal:
+
+```sh
+./src/cli.mjs serve
+```
+
+`serve` uses the default loopback listener and a random available port. It accepts the same listener and public URL options as `deploy`.
+
+## Remote telemetry
+
+The build removes these remote telemetry paths from the adapted application:
+
+* Sentry renderer error reporting and its `sentry-ipc://` requests
+* OpenTelemetry renderer trace exports that use the Sentry transport
+* Statsig event logging, exposure logging, and SDK exception reports
+* Segment structured product analytics
+* Codex analytics submissions to `/wham/analytics-events/events`
+* Codex app-server analytics, including explicit user configuration that enables analytics
+
+The app-server receives `-c analytics.enabled=false`. This command-line override has priority over `config.toml`.
+
+Statsig feature-configuration downloads remain enabled because application features use their results. Authentication and Codex API requests also remain enabled.
+
+## Development
 
 Run the source checks and focused tests:
 
@@ -173,6 +175,6 @@ pjdoc validate --scope all
 
 ## Design documents
 
-- [Product brief](doc/brief.md)
-- [Specification](doc/spec/index.md)
-- [Architecture contracts](doc/architecture/index.md)
+* [Product brief](doc/brief.md)
+* [Specification](doc/spec/index.md)
+* [Architecture contracts](doc/architecture/index.md)
