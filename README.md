@@ -6,6 +6,21 @@ Serve the current upstream Codex Desktop interface in a Chromium-family browser 
 
 The wrapper is a single-user service. It is not a replacement Codex client.
 
+## Remote telemetry
+
+The build removes these remote telemetry paths from the adapted application:
+
+- Sentry renderer error reporting and its `sentry-ipc://` requests.
+- OpenTelemetry renderer trace exports that use the Sentry transport.
+- Statsig event logging, exposure logging, and SDK exception reports.
+- Segment structured product analytics.
+- Codex analytics submissions to `/wham/analytics-events/events`.
+- Codex app-server analytics, including an explicit user configuration that enables analytics.
+
+The app-server receives `-c analytics.enabled=false`. This command-line override has priority over `config.toml`.
+
+Statsig feature-configuration downloads remain enabled because application features use their results. Authentication and Codex API requests also remain enabled.
+
 ## Screenshot
 
 <img width="1836" height="1119" alt="CleanShot 2026-08-07 at 02 15 40@2x" src="https://github.com/user-attachments/assets/8f8b7c1c-a0be-444c-b25c-e69563fa765e" />

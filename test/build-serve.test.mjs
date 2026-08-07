@@ -74,7 +74,11 @@ async function createSyntheticDmg(root) {
   );
   await writeFile(
     join(assetsRoot, "app-initial-fixture.js"),
-    "function Lrc(e){let{sources:n,setSources:r}=e;lp(`workspace-root-option-picked`,()=>{});let k=(0,PQ.jsx)(Z,{id:`projectSetup.createLocalProject.sourceFoldersLabel`});return(0,PQ.jsxs)(jP,{className:`gap-2`,children:[k,`fixture`]})}function Rrc(){dp.dispatchMessage(`electron-pick-workspace-root-option`,{allowMultiple:!0})}function Lcc(e){return yp(`remote-workspace-directory-entries`,e)}var Hcc,Ucc,Wcc,qQ,Gcc,Kcc=n((()=>{}));function P(e){let t=(0,C.c)(32),{isPetVisible:s,onTogglePet:p}=e;let x;t[11]!==s||t[12]!==p?(x=p==null?null:(0,J.jsx)(AR,{children:s?(0,J.jsx)(Z,{id:`codex.profileFooter.hidePet`,defaultMessage:`Hide pet`}):(0,J.jsx)(Z,{id:`codex.profileFooter.showPet`,defaultMessage:`Show pet`})}),t[11]=s,t[12]=p,t[13]=x):x=t[13];let S;t[14]===x?S=t[15]:(S=(0,J.jsx)(J.Fragment,{children:x}),t[14]=x,t[15]=S);let w=(0,J.jsx)(Z,{id:`settings`});return(0,J.jsxs)(`div`,{children:[h,S,w]})}\n",
+    [
+      "function Lrc(e){let{sources:n,setSources:r}=e;lp(`workspace-root-option-picked`,()=>{});let k=(0,PQ.jsx)(Z,{id:`projectSetup.createLocalProject.sourceFoldersLabel`});return(0,PQ.jsxs)(jP,{className:`gap-2`,children:[k,`fixture`]})}function Rrc(){dp.dispatchMessage(`electron-pick-workspace-root-option`,{allowMultiple:!0})}function Lcc(e){return yp(`remote-workspace-directory-entries`,e)}var Hcc,Ucc,Wcc,qQ,Gcc,Kcc=n((()=>{}));function P(e){let t=(0,C.c)(32),{isPetVisible:s,onTogglePet:p}=e;let x;t[11]!==s||t[12]!==p?(x=p==null?null:(0,J.jsx)(AR,{children:s?(0,J.jsx)(Z,{id:`codex.profileFooter.hidePet`,defaultMessage:`Hide pet`}):(0,J.jsx)(Z,{id:`codex.profileFooter.showPet`,defaultMessage:`Show pet`})}),t[11]=s,t[12]=p,t[13]=x):x=t[13];let S;t[14]===x?S=t[15]:(S=(0,J.jsx)(J.Fragment,{children:x}),t[14]=x,t[15]=S);let w=(0,J.jsx)(Z,{id:`settings`});return(0,J.jsxs)(`div`,{children:[h,S,w]})}\n",
+      "let O9c=`https://ab.chatgpt.com/v1`,l5c=`https://chatgpt.com/ces/v1/rgstr`,k9c=`https://ab.chatgpt.com/v1/sdk_exception`,a9c=()=>{},N9c={networkConfig:{api:O9c,logEventUrl:l5c,sdkExceptionUrl:k9c,networkOverrideFunc:a9c}},P9c={...N9c,disableStorage:!0,loggingEnabled:`disabled`};\n",
+      "let analyticsProvider={submitCodexAnalyticsEvent:r===`chatgpt`?w5c:null};\n",
+    ].join(""),
   );
   await writeFile(
     join(assetsRoot, "thread-app-shell-chrome-fixture.js"),
@@ -94,7 +98,7 @@ async function createSyntheticDmg(root) {
   );
   await writeFile(
     join(buildRoot, "main-fixture.js"),
-    "let M,s,d,f,l={BrowserWindow:class{}};new l.BrowserWindow({backgroundColor:M,show:s,parent:d,...f===void 0?{}:{focusable:f},webPreferences:{}});\n",
+    "let M,s,d,f,l={BrowserWindow:class{}};new l.BrowserWindow({backgroundColor:M,show:s,parent:d,...f===void 0?{}:{focusable:f},webPreferences:{}});function W(){return[`app-server`,`--analytics-default-enabled`,`wsl`]}\n",
   );
   await createPackage(appSource, join(resourcesRoot, "app.asar"));
 
@@ -179,16 +183,18 @@ test("build and serve the patched upstream interface", async (context) => {
   );
   assert.match(preloadSource, /CODEX_WEB_RELAY_URL/);
   assert.match(preloadSource, /codex_desktop:connect-app-host/);
-  assert.match(
-    await readFile(
-      join(result.outputRoot, "upstream", ".vite", "build", "main-fixture.js"),
-      "utf8",
-    ),
-    /CODEX_WEB_HEADLESS/,
+  const mainSource = await readFile(
+    join(result.outputRoot, "upstream", ".vite", "build", "main-fixture.js"),
+    "utf8",
   );
+  assert.match(mainSource, /CODEX_WEB_HEADLESS/);
+  assert.match(mainSource, /`-c`,`analytics\.enabled=false`/);
+  assert.doesNotMatch(mainSource, /--analytics-default-enabled/);
   assert.match(preloadSource, /CODEX_WEB_APP_SERVER_PROXY/);
   assert.match(preloadSource, /CODEX_WEB_APP_SERVER_PROXY_PATH/);
-  assert.match(preloadSource, /`app-server`,`--analytics-default-enabled`/);
+  assert.match(preloadSource, /`app-server`,`-c`,`analytics\.enabled=false`/);
+
+  assert.doesNotMatch(preloadSource, /--analytics-default-enabled/);
   assert.doesNotMatch(preloadSource, /`app-server`,`proxy`/);
   assert.doesNotMatch(preloadSource, /showContextMenu/);
   const rendererSource = await readFile(
@@ -208,6 +214,10 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.doesNotMatch(rendererSource, /electron-pick-workspace-root-option/);
   assert.match(rendererSource, /__codex_hide_profile_pet_action/);
   assert.doesNotMatch(rendererSource, /children:\[h,S,w\]/);
+  assert.match(rendererSource, /__codex_disable_remote_telemetry/);
+  assert.match(rendererSource, /loggingEnabled:`disabled`/);
+  assert.match(rendererSource, /submitCodexAnalyticsEvent:null/);
+  assert.doesNotMatch(rendererSource, /submitCodexAnalyticsEvent:r===/);
   const sidePanelSource = await readFile(
     join(
       result.outputRoot,
@@ -247,7 +257,7 @@ test("build and serve the patched upstream interface", async (context) => {
 
   const bootstrapFixture = {
     appSessionId: "fixture-session",
-    sentryInitOptions: { desktopTraceSampleRate: 0 },
+    sentryInitOptions: null,
     sharedObjectSnapshot: { fixture: ["value"] },
   };
   server.setBootstrap(bootstrapFixture);
@@ -292,7 +302,10 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.match(bridgeSource, /app-host-message/);
   assert.match(bridgeSource, /bootstrap\.sharedObjectSnapshot\[key\]/);
   assert.match(bridgeSource, /__codex_bootstrap/);
-  assert.match(bridgeSource, /bootstrap\.sentryInitOptions/);
+  assert.doesNotMatch(bridgeSource, /getSentryInitOptions/);
+
+  assert.match(bridgeSource, /triggerSentryTestError: \(\) => undefined/);
+  assert.doesNotMatch(bridgeSource, /bootstrap\.sentryInitOptions/);
   assert.doesNotMatch(bridgeSource, /window\.prompt/);
   assert.doesNotMatch(bridgeSource, /showContextMenu/);
   assert.doesNotMatch(bridgeSource, /workspace-root-option-picked/);

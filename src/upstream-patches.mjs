@@ -240,8 +240,7 @@ const browserBridgeSource = String.raw`
       dark.addEventListener("change", listener);
       return () => dark.removeEventListener("change", listener);
     },
-    triggerSentryTestError: () => invoke("triggerSentryTestError"),
-    getSentryInitOptions: () => bootstrap.sentryInitOptions,
+    triggerSentryTestError: () => undefined,
     getAppSessionId: () => bootstrap.appSessionId,
     getBuildFlavor: () => bootstrap.buildFlavor,
     isDeviceCheckSupported: () => bootstrap.deviceCheckSupported,
@@ -267,7 +266,6 @@ function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
     "sendMessageFromView",
     "sendWorkerMessageFromView",
     "getFastModeRolloutMetrics",
-    "triggerSentryTestError",
   ];
   return `(() => {
     const relayUrl = process.env.CODEX_WEB_RELAY_URL;
@@ -284,7 +282,7 @@ function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
       deviceCheckSupported: ${bridgeAlias}.isDeviceCheckSupported(),
       initialSidebarBootstrap: ${bridgeAlias}.getInitialSidebarBootstrap(),
       intelMacBuild: ${bridgeAlias}.isIntelMacBuild(),
-      sentryInitOptions: ${bridgeAlias}.getSentryInitOptions(),
+      sentryInitOptions: null,
       sharedObjectSnapshot: ${sharedObjectAlias},
       systemThemeVariant: ${bridgeAlias}.getSystemThemeVariant(),
       usesOwlAppShell: ${bridgeAlias}.usesOwlAppShell(),
@@ -435,6 +433,9 @@ function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
 }
 
 const appServerProxyMarker = "CODEX_WEB_APP_SERVER_PROXY";
+
+const appServerAnalyticsDefaultFlag = "`--analytics-default-enabled`";
+const appServerAnalyticsDisabledArguments = "`-c`,`analytics.enabled=false`";
 const appServerLaunchPattern =
   /`app-server`\s*,\s*`--analytics-default-enabled`\s*\]\}/g;
 const appServerCommandPattern =
@@ -460,7 +461,7 @@ function patchAppServerTransport(source) {
   const [command, configAlias, resolverAlias, optionsSource] = commandMatches[0];
   const markedSource = source.replace(
     launchMatches[0][0],
-    `/* ${appServerProxyMarker} */${launchMatches[0][0]}`,
+    `/* ${appServerProxyMarker} */${launchMatches[0][0].replace(appServerAnalyticsDefaultFlag, appServerAnalyticsDisabledArguments)}`,
   );
   return markedSource.replace(
     command,
@@ -631,6 +632,58 @@ function patchWebviewRenderer(source) {
     source.slice(localComponentStart, pickerStart + pickerSource.length),
     replacement,
   );
+}
+
+const remoteTelemetryMarker = "__codex_disable_remote_telemetry";
+
+function patchRendererRemoteTelemetry(source) {
+  if (source.includes(remoteTelemetryMarker)) {
+    return source;
+  }
+
+  const statsigOptionsPattern =
+    /([A-Za-z_$][\w$]*)=\{networkConfig:\{api:([A-Za-z_$][\w$]*),logEventUrl:([A-Za-z_$][\w$]*),sdkExceptionUrl:([A-Za-z_$][\w$]*),networkOverrideFunc:([A-Za-z_$][\w$]*)\}\},([A-Za-z_$][\w$]*)=\{\.\.\.\1,disableStorage:!0,loggingEnabled:`disabled`\}/g;
+  const statsigOptionsMatches = [...source.matchAll(statsigOptionsPattern)];
+  if (statsigOptionsMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream Statsig options block, found ${statsigOptionsMatches.length}`,
+    );
+  }
+
+  const [
+    statsigOptionsSource,
+    optionsAlias,
+    apiUrlAlias,
+    logEventUrlAlias,
+    sdkExceptionUrlAlias,
+    networkOverrideAlias,
+    fallbackOptionsAlias,
+  ] = statsigOptionsMatches[0];
+  const networkOverride =
+    `(url,options)=>url===${logEventUrlAlias}||url===${sdkExceptionUrlAlias}` +
+    `?Promise.resolve(new Response(null,{status:204})):${networkOverrideAlias}(url,options)`;
+  let patched = source.replace(
+    statsigOptionsSource,
+    `${optionsAlias}={networkConfig:{api:${apiUrlAlias},logEventUrl:${logEventUrlAlias},` +
+      `sdkExceptionUrl:${sdkExceptionUrlAlias},networkOverrideFunc:${networkOverride}},` +
+      `disableStorage:!0,loggingEnabled:\`disabled\`},` +
+      `${fallbackOptionsAlias}=${optionsAlias}/* ${remoteTelemetryMarker} */`,
+  );
+
+  const codexAnalyticsPattern =
+    /submitCodexAnalyticsEvent:[A-Za-z_$][\w$]*===`chatgpt`\?[A-Za-z_$][\w$]*:null/g;
+  const codexAnalyticsMatches = [...patched.matchAll(codexAnalyticsPattern)];
+  if (codexAnalyticsMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream Codex analytics provider, found ${codexAnalyticsMatches.length}`,
+    );
+  }
+
+  patched = patched.replace(
+    codexAnalyticsMatches[0][0],
+    "submitCodexAnalyticsEvent:null",
+  );
+  return patched;
 }
 
 function patchProfilePetAction(source) {
@@ -852,7 +905,9 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
   let patchedPreload = patchPreload(preload);
   let patchedMainProcess = patchMainProcess(mainProcess);
   const patchedIndex = patchWebviewIndex(index);
-  const patchedRenderer = patchProfilePetAction(patchWebviewRenderer(renderer));
+  const patchedRenderer = patchRendererRemoteTelemetry(
+    patchProfilePetAction(patchWebviewRenderer(renderer)),
+  );
   const patchedSidePanel = patchBrowserSidePanelAction(sidePanel);
   const webManifest = `${JSON.stringify(
     {
@@ -885,6 +940,21 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     patchedMainProcess = patchAppServerTransport(patchedMainProcess);
   } else {
     patchedAppServerTransport = patchAppServerTransport(appServerTransport.source);
+  }
+
+  patchedPreload = patchedPreload.replaceAll(
+    appServerAnalyticsDefaultFlag,
+    appServerAnalyticsDisabledArguments,
+  );
+  patchedMainProcess = patchedMainProcess.replaceAll(
+    appServerAnalyticsDefaultFlag,
+    appServerAnalyticsDisabledArguments,
+  );
+  if (patchedAppServerTransport !== null) {
+    patchedAppServerTransport = patchedAppServerTransport.replaceAll(
+      appServerAnalyticsDefaultFlag,
+      appServerAnalyticsDisabledArguments,
+    );
   }
 
   await Promise.all([
