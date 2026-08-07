@@ -65,6 +65,7 @@ test("installs and starts a managed user service", async context => {
   const homeDirectory = await mkdtemp(join(tmpdir(), "codex-web-home-"));
   context.after(() => rm(homeDirectory, { recursive: true, force: true }));
   const calls = [];
+  const progressEvents = [];
 
   const result = await installUserService({
     projectRoot: "/srv/codex-web",
@@ -73,8 +74,8 @@ test("installs and starts a managed user service", async context => {
     publicUrl: "https://codex.example.com",
     homeDirectory,
     nodePath: "/usr/bin/node",
-    run: async (command, arguments_) => {
-      calls.push([command, arguments_]);
+    run: async (command, arguments_, options) => {
+      calls.push([command, arguments_, options]);
       if (command === "journalctl") {
         return "Open https://codex.example.com/?cap=fixture\n";
       }
@@ -82,6 +83,7 @@ test("installs and starts a managed user service", async context => {
     },
     wait: async () => {},
     urlWaitAttempts: 1,
+    progress: event => progressEvents.push(event),
   });
 
   assert.equal(
@@ -105,6 +107,28 @@ test("installs and starts a managed user service", async context => {
     ],
   );
   assert.equal(calls[3][0], "journalctl");
+  assert.equal(calls[0][2].timeoutMs, 30_000);
+  assert.equal(calls[3][2].timeoutMs, 10_000);
+  assert.deepEqual(
+    progressEvents
+      .filter(event => event.status === "started")
+      .map(event => event.phase),
+    [
+      "inspect systemd service",
+      "write systemd service",
+      "reload systemd",
+      "enable systemd service",
+      "restart systemd service",
+      "read service journal",
+    ],
+  );
+  assert.ok(
+    progressEvents.some(
+      event =>
+        event.status === "info" &&
+        event.message === "wait for service URL (attempt 1/1)",
+    ),
+  );
 });
 
 test("does not replace an unmanaged user service", async context => {

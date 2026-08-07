@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import {
   cp,
   mkdtemp,
@@ -7,28 +6,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-async function run(command, arguments_, options = {}) {
-  const output = [];
-  const child = spawn(command, arguments_, {
-    ...options,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  for (const stream of [child.stdout, child.stderr]) {
-    stream.setEncoding("utf8");
-    stream.on("data", (chunk) => output.push(chunk));
-  }
+import { runBufferedCommand } from "./process-runner.mjs";
+import { runPhase } from "./progress.mjs";
 
-  const exitCode = await new Promise((resolveExit, reject) => {
-    child.once("error", reject);
-    child.once("close", resolveExit);
-  });
-  if (exitCode !== 0) {
-    throw new Error(
-      `${command} failed with exit code ${exitCode}: ${output.join("").trim()}`,
-    );
-  }
-}
+const electronRebuildCli = fileURLToPath(
+  new URL("../node_modules/@electron/rebuild/lib/cli.js", import.meta.url),
+);
 
 async function readModuleVersion(upstreamRoot, moduleName) {
   const packagePath = join(
@@ -113,13 +98,20 @@ export async function rebuildNativeModules({
   arch,
   platform,
   rebuildImpl,
+  progress,
 }) {
-  const versions = {
-    "better-sqlite3": await readModuleVersion(buildPath, "better-sqlite3"),
-    "node-pty": await readModuleVersion(buildPath, "node-pty"),
-  };
-  const nativeBuildRoot = await mkdtemp(
-    join(dirname(buildPath), ".native-build-"),
+  const versions = await runPhase(
+    progress,
+    "read native module versions",
+    async () => ({
+      "better-sqlite3": await readModuleVersion(buildPath, "better-sqlite3"),
+      "node-pty": await readModuleVersion(buildPath, "node-pty"),
+    }),
+  );
+  const nativeBuildRoot = await runPhase(
+    progress,
+    "prepare native module workspace",
+    () => mkdtemp(join(dirname(buildPath), ".native-build-")),
   );
 
   try {
@@ -127,41 +119,76 @@ export async function rebuildNativeModules({
       join(nativeBuildRoot, "package.json"),
       `${JSON.stringify({ private: true })}\n`,
     );
-    await run(
-      "npm",
-      [
-        "install",
-        "--ignore-scripts",
-        "--no-audit",
-        "--no-fund",
-        "--save-exact",
-        `better-sqlite3@${versions["better-sqlite3"]}`,
-        `node-pty@${versions["node-pty"]}`,
-      ],
-      { cwd: nativeBuildRoot },
+    await runPhase(progress, "install native module sources", () =>
+      runBufferedCommand(
+        "npm",
+        [
+          "install",
+          "--ignore-scripts",
+          "--no-audit",
+          "--no-fund",
+          "--save-exact",
+          `better-sqlite3@${versions["better-sqlite3"]}`,
+          `node-pty@${versions["node-pty"]}`,
+        ],
+        {
+          cwd: nativeBuildRoot,
+          label: "install native module sources",
+          timeoutMs: 600_000,
+        },
+      ),
+    );
+    await runPhase(progress, "patch better-sqlite3", () =>
+      patchBetterSqlite3ForElectron42(
+        join(nativeBuildRoot, "node_modules", "better-sqlite3"),
+        electronVersion,
+      ),
     );
 
-    await patchBetterSqlite3ForElectron42(
-      join(nativeBuildRoot, "node_modules", "better-sqlite3"),
-      electronVersion,
-    );
-    await rebuildImpl({
+    const rebuildOptions = {
       buildPath: nativeBuildRoot,
       electronVersion,
       arch,
       platform,
       force: true,
-    });
+    };
+    await runPhase(progress, "rebuild native modules", () =>
+      rebuildImpl === undefined
+        ? runBufferedCommand(
+            process.execPath,
+            [
+              electronRebuildCli,
+              "--version",
+              electronVersion,
+              "--module-dir",
+              nativeBuildRoot,
+              "--arch",
+              arch,
+              "--platform",
+              platform,
+              "--force",
+              "--sequential",
+            ],
+            {
+              label: "rebuild native modules",
+              timeoutMs: 600_000,
+            },
+          )
+: rebuildImpl(rebuildOptions),
+    );
 
-    for (const moduleName of Object.keys(versions)) {
-      const destination = join(buildPath, "node_modules", moduleName);
-      await rm(destination, { recursive: true, force: true });
-      await cp(join(nativeBuildRoot, "node_modules", moduleName), destination, {
-        recursive: true,
-      });
-    }
+    await runPhase(progress, "install rebuilt native modules", async () => {
+      for (const moduleName of Object.keys(versions)) {
+        const destination = join(buildPath, "node_modules", moduleName);
+        await rm(destination, { recursive: true, force: true });
+        await cp(join(nativeBuildRoot, "node_modules", moduleName), destination, {
+          recursive: true,
+        });
+      }
+    });
   } finally {
-    await rm(nativeBuildRoot, { recursive: true, force: true });
+    await runPhase(progress, "clean native module workspace", () =>
+      rm(nativeBuildRoot, { recursive: true, force: true }),
+    );
   }
 }
-

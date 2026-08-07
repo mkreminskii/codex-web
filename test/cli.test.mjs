@@ -149,11 +149,25 @@ test("deploy builds and installs a user service with network options", async () 
       stdout: stdout.stream,
       stderr: stderr.stream,
       build: async options => {
+        assert.match(stdout.read(), /deploy: start/);
         buildCalls.push(options);
+        options.progress({
+          status: "started",
+          phase: "inspect remote DMG",
+        });
+        options.progress({
+          status: "completed",
+          phase: "inspect remote DMG",
+          elapsedMs: 1_250,
+        });
         return { outputRoot: "/tmp/output", warning: null };
       },
       deploy: async options => {
         deployCalls.push(options);
+        options.progress({
+          status: "info",
+          message: "wait for service URL (attempt 1/30)",
+        });
         return {
           servicePath: "/tmp/codex-web.service",
           url: "https://codex.example.com/?cap=fixture",
@@ -171,9 +185,14 @@ test("deploy builds and installs a user service with network options", async () 
       host: "192.0.2.10",
       port: 8443,
       publicUrl: "https://codex.example.com",
+      progress: buildCalls[0].progress,
     },
   ]);
   assert.ok(stdout.read().includes("Installed /tmp/codex-web.service"));
   assert.ok(stdout.read().includes("Open https://codex.example.com"));
   assert.match(stderr.read(), /non-loopback HTTP/);
+  assert.match(stdout.read(), /deploy: inspect remote DMG\.\.\./);
+  assert.match(stdout.read(), /deploy: inspect remote DMG completed \(1\.3s\)/);
+  assert.match(stdout.read(), /deploy: wait for service URL \(attempt 1\/30\)/);
+  assert.match(stdout.read(), /deploy: complete/);
 });

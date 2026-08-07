@@ -23,6 +23,7 @@ test("stages the exact upstream Electron runtime and rebuild target", async (con
   await mkdir(cacheRoot);
 
   const calls = [];
+  const progressEvents = [];
   const result = await stageElectronRuntime({
     upstreamRoot,
     candidateRoot,
@@ -44,6 +45,7 @@ test("stages the exact upstream Electron runtime and rebuild target", async (con
     rebuildNativeModulesImpl: async (options) => {
       calls.push({ kind: "rebuild", options });
     },
+    progress: event => progressEvents.push(event),
   });
 
   assert.equal(result.electronVersion, "42.3.0");
@@ -55,6 +57,19 @@ test("stages the exact upstream Electron runtime and rebuild target", async (con
   assert.equal(calls[1].options.buildPath, upstreamRoot);
   assert.equal(calls[1].options.platform, "linux");
   assert.equal(calls[1].options.arch, "x64");
+  assert.ok(calls[0].options.downloadOptions.signal instanceof AbortSignal);
+  assert.deepEqual(
+    progressEvents
+      .filter(event => event.status === "started")
+      .map(event => event.phase),
+    [
+      "prepare Electron runtime workspace",
+      "download or reuse Electron runtime",
+      "extract Electron runtime",
+      "validate Electron runtime",
+      "prepare native modules",
+    ],
+  );
 });
 
 test("rejects a non-exact upstream Electron dependency", async () => {

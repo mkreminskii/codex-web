@@ -18,9 +18,10 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
 
 import { extractAll, listPackage } from "@electron/asar";
+import { runBufferedCommand } from "./process-runner.mjs";
+import { reportProgress, runPhase } from "./progress.mjs";
 
 export const OFFICIAL_DMG_URL =
   "https://persistent.oaistatic.com/codex-app-prod/ChatGPT.dmg";
@@ -229,26 +230,16 @@ async function resolveLocalDmg(inputPath) {
 }
 
 async function runSevenZip(dmgPath, extractRoot) {
-  const output = [];
-  const child = spawn("7z", ["x", "-y", "-snl", dmgPath, `-o${extractRoot}`], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  for (const stream of [child.stdout, child.stderr]) {
-    stream.setEncoding("utf8");
-    stream.on("data", (chunk) => {
-      output.push(chunk);
-      if (output.join("").length > 128 * 1024) {
-        output.shift();
-      }
-    });
-  }
-
-  const exitCode = await new Promise((resolveExit, reject) => {
-    child.once("error", reject);
-    child.once("close", resolveExit);
-  });
-  return { exitCode, output: output.join("") };
+  const result = await runBufferedCommand(
+    "7z",
+    ["x", "-y", "-snl", dmgPath, `-o${extractRoot}`],
+    {
+      allowNonZero: true,
+      label: "extract DMG",
+      timeoutMs: 600_000,
+    },
+  );
+  return { exitCode: result.code, output: result.output };
 }
 
 async function findAppBundles(root, depth = 0) {
@@ -308,35 +299,60 @@ async function validateExtractedApp(upstreamRoot) {
   };
 }
 
-async function extractDmgToUpstream(sourceDmg, extractRoot, upstreamRoot) {
-  await mkdir(extractRoot);
-  await mkdir(upstreamRoot, { recursive: true });
+async function extractDmgToUpstream(
+  sourceDmg,
+  extractRoot,
+  upstreamRoot,
+  progress,
+) {
+  await runPhase(progress, "prepare extraction workspace", async () => {
+    await mkdir(extractRoot);
+    await mkdir(upstreamRoot, { recursive: true });
+  });
 
-  const sevenZip = await runSevenZip(sourceDmg, extractRoot);
-  const asarPath = await findUpstreamAsar(extractRoot);
-  if (sevenZip.exitCode !== 0 && !sevenZip.output.includes("Dangerous link path was ignored")) {
-    throw new Error(
-      `7z failed with exit code ${sevenZip.exitCode}: ${sevenZip.output.trim()}`,
-    );
-  }
+  const sevenZip = await runPhase(progress, "extract DMG", async () => {
+    const result = await runSevenZip(sourceDmg, extractRoot);
+    if (
+      result.exitCode !== 0 &&
+      !result.output.includes("Dangerous link path was ignored")
+    ) {
+      throw new Error(
+        `7z failed with exit code ${result.exitCode}: ${result.output.trim()}`,
+      );
+    }
+    return result;
+  });
+  const asarPath = await runPhase(
+    progress,
+    "locate upstream app.asar",
+    () => findUpstreamAsar(extractRoot),
+  );
+  const application = await runPhase(
+    progress,
+    "extract upstream app.asar",
+    async () => {
+      const archiveFiles = listPackage(asarPath, { isPack: false });
+      if (!archiveFiles.includes("/webview/index.html")) {
+        throw new Error(
+          "Upstream ASAR layout changed: webview/index.html is absent",
+        );
+      }
 
-  const archiveFiles = listPackage(asarPath, { isPack: false });
-  if (!archiveFiles.includes("/webview/index.html")) {
-    throw new Error("Upstream ASAR layout changed: webview/index.html is absent");
-  }
-
-  extractAll(asarPath, upstreamRoot);
-  const unpackedRoot = `${asarPath}.unpacked`;
-  const unpackedEntry = await lstat(unpackedRoot).catch(() => null);
-  if (unpackedEntry?.isDirectory()) {
-    await cp(unpackedRoot, upstreamRoot, {
-      recursive: true,
-      force: true,
-    });
-  }
+      extractAll(asarPath, upstreamRoot);
+      const unpackedRoot = `${asarPath}.unpacked`;
+      const unpackedEntry = await lstat(unpackedRoot).catch(() => null);
+      if (unpackedEntry?.isDirectory()) {
+        await cp(unpackedRoot, upstreamRoot, {
+          recursive: true,
+          force: true,
+        });
+      }
+      return validateExtractedApp(upstreamRoot);
+    },
+  );
 
   return {
-    application: await validateExtractedApp(upstreamRoot),
+    application,
     warning: sevenZip.exitCode === 0 ? null : sevenZip.output.trim(),
   };
 }
@@ -358,13 +374,19 @@ export async function extractWebWrapper({
   root = projectRoot,
   fetchImpl = fetch,
   destination,
+  progress,
 } = {}) {
   const workRoot = join(root, "work");
   const distRoot = join(root, "dist");
-  await mkdir(workRoot, { recursive: true, mode: 0o700 });
-  await mkdir(distRoot, { recursive: true });
-
-  const temporaryRoot = await mkdtemp(join(workRoot, "build-"));
+  const temporaryRoot = await runPhase(
+    progress,
+    "prepare upstream workspace",
+    async () => {
+      await mkdir(workRoot, { recursive: true, mode: 0o700 });
+      await mkdir(distRoot, { recursive: true });
+      return mkdtemp(join(workRoot, "build-"));
+    },
+  );
   const extractRoot = join(temporaryRoot, "dmg");
   const candidateRoot = join(temporaryRoot, "candidate");
   const upstreamRoot = join(candidateRoot, "upstream");
@@ -378,40 +400,78 @@ export async function extractWebWrapper({
       const cacheRoot = join(workRoot, "upstream");
       await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
 
-      const freshness = await inspectCurrentDmg(fetchImpl);
-      const cachedSource = await readCachedDmg(cacheRoot, freshness);
+      const freshness = await runPhase(
+        progress,
+        "inspect remote DMG",
+        () => inspectCurrentDmg(fetchImpl),
+      );
+      const cachedSource = await runPhase(
+        progress,
+        "verify DMG cache",
+        () => readCachedDmg(cacheRoot, freshness),
+      );
+      reportProgress(
+        progress,
+        cachedSource === null
+          ? "DMG cache is stale or incomplete"
+          : "DMG cache is current",
+      );
       const cachedExtraction =
         cachedSource === null
           ? null
-          : await readExtractedCache(cacheRoot, cachedSource);
+          : await runPhase(
+              progress,
+              "verify extracted application cache",
+              () => readExtractedCache(cacheRoot, cachedSource),
+            );
+      reportProgress(
+        progress,
+        cachedExtraction === null
+          ? "extracted application cache is stale or incomplete"
+          : "extracted application cache is current",
+      );
 
       if (cachedSource !== null && cachedExtraction !== null) {
-        await cp(cachedExtraction.upstreamRoot, upstreamRoot, {
-          recursive: true,
-          force: true,
-        });
+        await runPhase(progress, "reuse extracted application", () =>
+          cp(cachedExtraction.upstreamRoot, upstreamRoot, {
+            recursive: true,
+            force: true,
+          }),
+        );
         source = cachedSource;
         extraction = cachedExtraction;
       } else {
-        source = await downloadCurrentDmg(cacheRoot, fetchImpl, freshness);
+        source = await runPhase(
+          progress,
+          "download current DMG",
+          () => downloadCurrentDmg(cacheRoot, fetchImpl, freshness),
+        );
         extraction = await extractDmgToUpstream(
           source.dmgPath,
           extractRoot,
           upstreamRoot,
+          progress,
         );
-        await writeExtractedCache(
-          cacheRoot,
-          upstreamRoot,
-          source,
-          extraction.warning,
+        await runPhase(progress, "write extracted application cache", () =>
+          writeExtractedCache(
+            cacheRoot,
+            upstreamRoot,
+            source,
+            extraction.warning,
+          ),
         );
       }
     } else {
-      source = await resolveLocalDmg(dmgPath);
+      source = await runPhase(
+        progress,
+        "verify local DMG",
+        () => resolveLocalDmg(dmgPath),
+      );
       extraction = await extractDmgToUpstream(
         source.dmgPath,
         extractRoot,
         upstreamRoot,
+        progress,
       );
     }
 
@@ -424,16 +484,22 @@ export async function extractWebWrapper({
         : { sourceLastModified: source.lastModified }),
       ...extraction.application,
     };
-    await writeFile(
-      join(candidateRoot, "manifest.json"),
-      `${JSON.stringify(manifest, null, 2)}\n`,
+    await runPhase(progress, "write upstream manifest", () =>
+      writeFile(
+        join(candidateRoot, "manifest.json"),
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      ),
     );
 
     const buildId = `${source.sourceSha256.slice(0, 16)}-${Date.now()}`;
-    const outputRoot =
-      destination === undefined
-        ? await promoteCandidate(candidateRoot, distRoot, buildId)
-        : await rename(candidateRoot, destination).then(() => destination);
+    const outputRoot = await runPhase(
+      progress,
+      "stage extracted application",
+      () =>
+        destination === undefined
+          ? promoteCandidate(candidateRoot, distRoot, buildId)
+          : rename(candidateRoot, destination).then(() => destination),
+    );
     return {
       outputRoot,
       manifest,
@@ -443,11 +509,17 @@ export async function extractWebWrapper({
     await rm(candidateRoot, { recursive: true, force: true });
     throw error;
   } finally {
-    if (await lstat(temporaryRoot).catch(() => null)) {
-      const resolvedTemporaryRoot = await realpath(temporaryRoot);
-      const resolvedWorkRoot = await realpath(workRoot);
-      assertWithin(resolvedWorkRoot, resolvedTemporaryRoot, "Temporary build");
-      await rm(temporaryRoot, { recursive: true, force: true });
-    }
+    await runPhase(progress, "clean upstream workspace", async () => {
+      if (await lstat(temporaryRoot).catch(() => null)) {
+        const resolvedTemporaryRoot = await realpath(temporaryRoot);
+        const resolvedWorkRoot = await realpath(workRoot);
+        assertWithin(
+          resolvedWorkRoot,
+          resolvedTemporaryRoot,
+          "Temporary build",
+        );
+        await rm(temporaryRoot, { recursive: true, force: true });
+      }
+    });
   }
 }

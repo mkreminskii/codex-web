@@ -26,6 +26,21 @@ function writeError(stderr, error) {
   stderr.write(`codex-web: ${message}\n`);
 }
 
+function writeDeployProgress(stdout, event) {
+  if (event.status === "info") {
+    stdout.write(`deploy: ${event.message}\n`);
+    return;
+  }
+
+  if (event.status === "started") {
+    stdout.write(`deploy: ${event.phase}...\n`);
+    return;
+  }
+
+  const elapsed = `${(event.elapsedMs / 1_000).toFixed(1)}s`;
+  stdout.write(`deploy: ${event.phase} ${event.status} (${elapsed})\n`);
+}
+
 function parseNetworkArguments(arguments_) {
   let host = "127.0.0.1";
   let port = 0;
@@ -153,14 +168,25 @@ export async function run(
     if (command === "deploy") {
       const { host, port, publicUrl } = parseNetworkArguments(arguments_);
       writeNetworkWarning(stderr, host);
-      const buildResult = await build({ root: projectRoot });
+      const progress = event => writeDeployProgress(stdout, event);
+      progress({ status: "info", message: "start" });
+
+      const buildResult = await build({ root: projectRoot, progress });
       stdout.write(`Built codex-web at ${buildResult.outputRoot}\n`);
       if (buildResult.warning !== null) {
         stderr.write(`7z warning: ${buildResult.warning}\n`);
       }
-      const deployed = await deploy({ projectRoot, host, port, publicUrl });
+
+      const deployed = await deploy({
+        projectRoot,
+        host,
+        port,
+        publicUrl,
+        progress,
+      });
       stdout.write(`Installed ${deployed.servicePath}\n`);
       stdout.write(`Open ${deployed.url}\n`);
+      progress({ status: "info", message: "complete" });
       return 0;
     }
 

@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -10,6 +9,8 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { appServerDaemonArguments } from "./runtime-host.mjs";
+import { runBufferedCommand } from "./process-runner.mjs";
+import { reportProgress, runPhase } from "./progress.mjs";
 
 const serviceName = "codex-web.service";
 const managedMarker = "# Managed by codex-web";
@@ -96,24 +97,18 @@ WantedBy=default.target
 `;
 }
 
-async function runCommand(command, arguments_) {
-  const output = [];
-  const child = spawn(command, arguments_, {
-    stdio: ["ignore", "pipe", "pipe"],
+async function runCommand(
+  command,
+  arguments_,
+  {
+    label = command,
+    timeoutMs = 30_000,
+  } = {},
+) {
+  const result = await runBufferedCommand(command, arguments_, {
+    label,
+    timeoutMs,
   });
-  for (const stream of [child.stdout, child.stderr]) {
-    stream.setEncoding("utf8");
-    stream.on("data", chunk => output.push(chunk));
-  }
-  const result = await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", code => resolve({ code, output: output.join("") }));
-  });
-  if (result.code !== 0) {
-    throw new Error(
-      `${command} ${arguments_.join(" ")} failed with code ${result.code}: ${result.output.trim()}`,
-    );
-  }
   return result.output;
 }
 
@@ -138,6 +133,7 @@ export async function installUserService({
   wait = milliseconds =>
     new Promise(resolve => setTimeout(resolve, milliseconds)),
   urlWaitAttempts = 30,
+  progress,
 }) {
   const serviceDirectory = join(
     homeDirectory,
@@ -146,40 +142,62 @@ export async function installUserService({
     "user",
   );
   const servicePath = join(serviceDirectory, serviceName);
-  const existing = await readFile(servicePath, "utf8").catch(error => {
-    if (error.code === "ENOENT") {
-      return null;
+  await runPhase(progress, "inspect systemd service", async () => {
+    const existing = await readFile(servicePath, "utf8").catch(error => {
+      if (error.code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    });
+    if (existing !== null && !existing.startsWith(`${managedMarker}\n`)) {
+      throw new Error(
+        `Refusing to replace an unmanaged systemd service: ${servicePath}`,
+      );
     }
-    throw error;
   });
-  if (existing !== null && !existing.startsWith(`${managedMarker}\n`)) {
-    throw new Error(
-      `Refusing to replace an unmanaged systemd service: ${servicePath}`,
-    );
-  }
 
-  await mkdir(serviceDirectory, { recursive: true, mode: 0o700 });
-  const temporaryPath = `${servicePath}.tmp-${process.pid}-${randomUUID()}`;
-  const unit = createUserServiceUnit({
-    projectRoot,
-    host,
-    port,
-    publicUrl,
-    nodePath,
-    environment,
+  await runPhase(progress, "write systemd service", async () => {
+    await mkdir(serviceDirectory, { recursive: true, mode: 0o700 });
+    const temporaryPath = `${servicePath}.tmp-${process.pid}-${randomUUID()}`;
+    const unit = createUserServiceUnit({
+      projectRoot,
+      host,
+      port,
+      publicUrl,
+      nodePath,
+      environment,
+    });
+    try {
+      await writeFile(temporaryPath, unit, { flag: "wx", mode: 0o600 });
+      await rename(temporaryPath, servicePath);
+    } catch (error) {
+      await rm(temporaryPath, { force: true });
+      throw error;
+    }
   });
-  try {
-    await writeFile(temporaryPath, unit, { flag: "wx", mode: 0o600 });
-    await rename(temporaryPath, servicePath);
-  } catch (error) {
-    await rm(temporaryPath, { force: true });
-    throw error;
-  }
 
   const startedAfter = new Date().toISOString();
-  await run("systemctl", ["--user", "daemon-reload"]);
-  await run("systemctl", ["--user", "enable", serviceName]);
-  await run("systemctl", ["--user", "restart", serviceName]);
+  await runPhase(progress, "reload systemd", () =>
+    run(
+      "systemctl",
+      ["--user", "daemon-reload"],
+      { label: "reload systemd", timeoutMs: 30_000 },
+    ),
+  );
+  await runPhase(progress, "enable systemd service", () =>
+    run(
+      "systemctl",
+      ["--user", "enable", serviceName],
+      { label: "enable systemd service", timeoutMs: 30_000 },
+    ),
+  );
+  await runPhase(progress, "restart systemd service", () =>
+    run(
+      "systemctl",
+      ["--user", "restart", serviceName],
+      { label: "restart systemd service", timeoutMs: 30_000 },
+    ),
+  );
 
   const journalArguments = [
     "--user",
@@ -191,7 +209,18 @@ export async function installUserService({
     "--no-pager",
   ];
   for (let attempt = 0; attempt < urlWaitAttempts; attempt += 1) {
-    const url = reportedUrl(await run("journalctl", journalArguments));
+    reportProgress(
+      progress,
+      `wait for service URL (attempt ${attempt + 1}/${urlWaitAttempts})`,
+    );
+    const output = await runPhase(progress, "read service journal", () =>
+      run(
+        "journalctl",
+        journalArguments,
+        { label: "read service journal", timeoutMs: 10_000 },
+      ),
+    );
+    const url = reportedUrl(output);
     if (url !== null) {
       return { servicePath, url };
     }

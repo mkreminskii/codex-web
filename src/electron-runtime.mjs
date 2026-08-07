@@ -1,11 +1,11 @@
-import { spawn } from "node:child_process";
 import { chmod, mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { download } from "@electron/get";
-import { rebuild } from "@electron/rebuild";
 
 import { rebuildNativeModules } from "./native-modules.mjs";
+import { runBufferedCommand } from "./process-runner.mjs";
+import { runPhase } from "./progress.mjs";
 
 function requiredElectronVersion(packageJson) {
   const version =
@@ -17,28 +17,6 @@ function requiredElectronVersion(packageJson) {
     throw new Error("Upstream package metadata has no exact Electron version");
   }
   return version;
-}
-
-async function run(command, arguments_, options = {}) {
-  const output = [];
-  const child = spawn(command, arguments_, {
-    ...options,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  for (const stream of [child.stdout, child.stderr]) {
-    stream.setEncoding("utf8");
-    stream.on("data", (chunk) => output.push(chunk));
-  }
-
-  const exitCode = await new Promise((resolveExit, reject) => {
-    child.once("error", reject);
-    child.once("close", resolveExit);
-  });
-  if (exitCode !== 0) {
-    throw new Error(
-      `${command} failed with exit code ${exitCode}: ${output.join("").trim()}`,
-    );
-  }
 }
 
 async function isExecutableFile(path) {
@@ -58,11 +36,18 @@ export async function stageElectronRuntime({
   arch = process.arch,
   platform = process.platform,
   downloadImpl = download,
-  rebuildImpl = rebuild,
+  rebuildImpl,
   rebuildNativeModulesImpl = rebuildNativeModules,
-  extractZip = async (archive, destination) => {
-    await run("unzip", ["-q", archive, "-d", destination]);
-  },
+  extractZip = (archive, destination) =>
+    runBufferedCommand(
+      "unzip",
+      ["-q", archive, "-d", destination],
+      {
+        label: "extract Electron runtime",
+        timeoutMs: 600_000,
+      },
+    ),
+  progress,
 }) {
   if (platform !== "linux") {
     throw new Error(`codex-web currently supports only Linux hosts, not ${platform}`);
@@ -70,28 +55,45 @@ export async function stageElectronRuntime({
 
   const electronVersion = requiredElectronVersion(packageJson);
   const runtimeRoot = join(candidateRoot, "runtime");
-  await mkdir(runtimeRoot);
-  await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
-
-  const archivePath = await downloadImpl(electronVersion, {
-    cacheRoot,
-    tempDirectory: cacheRoot,
+  await runPhase(progress, "prepare Electron runtime workspace", async () => {
+    await mkdir(runtimeRoot);
+    await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
   });
-  await extractZip(archivePath, runtimeRoot);
+
+  const archivePath = await runPhase(
+    progress,
+    "download or reuse Electron runtime",
+    () =>
+      downloadImpl(electronVersion, {
+        cacheRoot,
+        tempDirectory: cacheRoot,
+        downloadOptions: {
+          signal: AbortSignal.timeout(600_000),
+        },
+      }),
+  );
+  await runPhase(progress, "extract Electron runtime", () =>
+    extractZip(archivePath, runtimeRoot),
+  );
 
   const electronPath = join(runtimeRoot, "electron");
-  await chmod(electronPath, 0o755);
-  if (!(await isExecutableFile(electronPath))) {
-    throw new Error("The downloaded Electron runtime has no executable");
-  }
-
-  await rebuildNativeModulesImpl({
-    buildPath: upstreamRoot,
-    electronVersion,
-    arch,
-    platform,
-    rebuildImpl,
+  await runPhase(progress, "validate Electron runtime", async () => {
+    await chmod(electronPath, 0o755);
+    if (!(await isExecutableFile(electronPath))) {
+      throw new Error("The downloaded Electron runtime has no executable");
+    }
   });
+
+  await runPhase(progress, "prepare native modules", () =>
+    rebuildNativeModulesImpl({
+      buildPath: upstreamRoot,
+      electronVersion,
+      arch,
+      platform,
+      rebuildImpl,
+      progress,
+    }),
+  );
 
   return {
     electronPath,
@@ -100,4 +102,3 @@ export async function stageElectronRuntime({
     arch,
   };
 }
-

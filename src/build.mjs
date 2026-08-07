@@ -15,6 +15,7 @@ import {
   promoteCandidate,
 } from "./extract-build.mjs";
 import { stageElectronRuntime } from "./electron-runtime.mjs";
+import { runPhase } from "./progress.mjs";
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -34,13 +35,19 @@ export async function buildWebWrapper({
   root = projectRoot,
   fetchImpl = fetch,
   stageRuntime = stageElectronRuntime,
+  progress,
 } = {}) {
   const workRoot = join(root, "work");
   const distRoot = join(root, "dist");
-  await mkdir(workRoot, { recursive: true, mode: 0o700 });
-  await mkdir(distRoot, { recursive: true });
-
-  const temporaryRoot = await mkdtemp(join(workRoot, "runtime-build-"));
+  const temporaryRoot = await runPhase(
+    progress,
+    "prepare build workspace",
+    async () => {
+      await mkdir(workRoot, { recursive: true, mode: 0o700 });
+      await mkdir(distRoot, { recursive: true });
+      return mkdtemp(join(workRoot, "runtime-build-"));
+    },
+  );
   const candidateRoot = join(temporaryRoot, "candidate");
 
   try {
@@ -49,18 +56,32 @@ export async function buildWebWrapper({
       root,
       fetchImpl,
       destination: candidateRoot,
+      progress,
     });
-    const packageJson = JSON.parse(
-      await readFile(join(candidateRoot, "upstream", "package.json"), "utf8"),
+    const packageJson = await runPhase(
+      progress,
+      "read upstream package metadata",
+      async () =>
+        JSON.parse(
+          await readFile(
+            join(candidateRoot, "upstream", "package.json"),
+            "utf8",
+          ),
+        ),
     );
-    const { applyUpstreamWebPatches } = await import("./upstream-patches.mjs");
-    const patches = await applyUpstreamWebPatches(join(candidateRoot, "upstream"));
-    const runtime = await stageRuntime({
-      upstreamRoot: join(candidateRoot, "upstream"),
-      candidateRoot,
-      cacheRoot: join(workRoot, "electron-cache"),
-      packageJson,
+    const patches = await runPhase(progress, "apply upstream patches", async () => {
+      const { applyUpstreamWebPatches } = await import("./upstream-patches.mjs");
+      return applyUpstreamWebPatches(join(candidateRoot, "upstream"));
     });
+    const runtime = await runPhase(progress, "stage Electron runtime", () =>
+      stageRuntime({
+        upstreamRoot: join(candidateRoot, "upstream"),
+        candidateRoot,
+        cacheRoot: join(workRoot, "electron-cache"),
+        packageJson,
+        progress,
+      }),
+    );
 
     const manifest = {
       ...extracted.manifest,
@@ -69,9 +90,11 @@ export async function buildWebWrapper({
       runtimeArch: runtime.arch,
       patches,
     };
-    await writeFile(
-      join(candidateRoot, "manifest.json"),
-      `${JSON.stringify(manifest, null, 2)}\n`,
+    await runPhase(progress, "write build manifest", () =>
+      writeFile(
+        join(candidateRoot, "manifest.json"),
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      ),
     );
 
     const buildId = [
@@ -81,7 +104,9 @@ export async function buildWebWrapper({
       runtime.electronVersion,
       Date.now(),
     ].join("-");
-    const outputRoot = await promoteCandidate(candidateRoot, distRoot, buildId);
+    const outputRoot = await runPhase(progress, "promote build", () =>
+      promoteCandidate(candidateRoot, distRoot, buildId),
+    );
 
     return {
       outputRoot,
@@ -89,11 +114,13 @@ export async function buildWebWrapper({
       warning: extracted.warning,
     };
   } finally {
-    const resolvedWorkRoot = await realpath(workRoot);
-    const resolvedTemporaryRoot = await realpath(temporaryRoot).catch(() => null);
-    if (resolvedTemporaryRoot !== null) {
-      assertManagedTemporaryRoot(resolvedWorkRoot, resolvedTemporaryRoot);
-      await rm(resolvedTemporaryRoot, { recursive: true, force: true });
-    }
+    await runPhase(progress, "clean build workspace", async () => {
+      const resolvedWorkRoot = await realpath(workRoot);
+      const resolvedTemporaryRoot = await realpath(temporaryRoot).catch(() => null);
+      if (resolvedTemporaryRoot !== null) {
+        assertManagedTemporaryRoot(resolvedWorkRoot, resolvedTemporaryRoot);
+        await rm(resolvedTemporaryRoot, { recursive: true, force: true });
+      }
+    });
   }
 }

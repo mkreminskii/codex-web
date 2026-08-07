@@ -764,12 +764,24 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     );
   }
 
-  const sidePanelCandidates = assetEntries.filter(
-    name => name.startsWith("thread-app-shell-chrome-") && name.endsWith(".js"),
+  const sidePanelFiles = await Promise.all(
+    assetEntries
+      .filter(
+        name =>
+          name.startsWith("thread-app-shell-chrome-") &&
+          name.endsWith(".js"),
+      )
+      .map(async name => ({
+        name,
+        source: await readFile(join(assetsRoot, name), "utf8"),
+      })),
+  );
+  const sidePanelCandidates = sidePanelFiles.filter(({ source }) =>
+    source.includes("id:`thread.sidePanel.openBrowserTab`"),
   );
   if (sidePanelCandidates.length !== 1) {
     throw new Error(
-      `Expected one upstream side-panel bundle, found ${sidePanelCandidates.length}`,
+      `Expected one upstream side-panel browser action bundle, found ${sidePanelCandidates.length}`,
     );
   }
 
@@ -777,7 +789,7 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
   const mainPath = join(buildRoot, mainCandidates[0]);
   const indexPath = join(webviewRoot, "index.html");
   const rendererPath = join(assetsRoot, rendererCandidates[0]);
-  const sidePanelPath = join(assetsRoot, sidePanelCandidates[0]);
+  const sidePanelPath = join(assetsRoot, sidePanelCandidates[0].name);
   const bridgePath = join(webviewRoot, "__codex_browser_bridge.js");
 
   const [preload, mainProcess, index, renderer, sidePanel] = await Promise.all([
@@ -789,7 +801,7 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
       : readFile(mainPath, "utf8"),
     readFile(indexPath, "utf8"),
     readFile(rendererPath, "utf8"),
-    readFile(sidePanelPath, "utf8"),
+    sidePanelCandidates[0].source,
   ]);
   let patchedPreload = patchPreload(preload);
   let patchedMainProcess = patchMainProcess(mainProcess);

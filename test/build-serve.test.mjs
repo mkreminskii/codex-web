@@ -74,6 +74,10 @@ async function createSyntheticDmg(root) {
     "let z=[...I?[{deferSelectionUntilDropdownClose:!0,id:`browser`,Icon:te,keyboardShortcut:A,onSelect:pe,title:(0,J.jsx)(V,{id:`thread.sidePanel.openBrowserTab`,defaultMessage:`Browser`,description:`Action label for opening the browser tab from the task side panel`})}]:[],...N?[{id:`review`}]:[],...t===`right`?d.map(e=>e):[]];\n",
   );
   await writeFile(
+    join(assetsRoot, "thread-app-shell-chrome-unused.js"),
+    "export const unrelatedSidePanelChunk = true;\n",
+  );
+  await writeFile(
     join(buildRoot, "preload.js"),
     [
       '"use strict";var e=require("electron"),k=e.ipcRenderer.sendSync(`codex_desktop:get-shared-object-snapshot`)??{},B={getSharedObjectSnapshotValue:t=>k[t]};e.contextBridge.exposeInMainWorld(`electronBridge`,B);\n',
@@ -363,11 +367,13 @@ test("remote Last-Modified controls the DMG and extraction cache", async (contex
 
   const dmgPath = await createSyntheticDmg(root);
   const remote = await createRemoteDmgFixture(dmgPath);
+  const progressEvents = [];
   const buildRemote = () =>
     buildWebWrapper({
       root,
       fetchImpl: remote.fetchImpl,
       stageRuntime: stageSyntheticRuntime,
+      progress: event => progressEvents.push(event),
     });
 
   const first = await buildRemote();
@@ -391,6 +397,27 @@ test("remote Last-Modified controls the DMG and extraction cache", async (contex
     "reused extraction\n",
   );
   assert.deepEqual(remote.state.calls, ["HEAD", "GET", "HEAD"]);
+  assert.ok(
+    progressEvents.some(
+      event =>
+        event.status === "info" &&
+        event.message === "DMG cache is current",
+    ),
+  );
+  assert.ok(
+    progressEvents.some(
+      event =>
+        event.status === "started" &&
+        event.phase === "reuse extracted application",
+    ),
+  );
+  assert.ok(
+    progressEvents.some(
+      event =>
+        event.status === "started" &&
+        event.phase === "stage Electron runtime",
+    ),
+  );
 
   remote.state.revision = 3;
   remote.state.lastModified = "Fri, 07 Aug 2026 12:00:00 GMT";
