@@ -100,7 +100,7 @@ async function createSyntheticDmg(root) {
   );
   await writeFile(
     join(buildRoot, "main-fixture.js"),
-    "let M,s,d,f,q=360,j=320,l={BrowserWindow:class{}};new l.BrowserWindow({backgroundColor:M,show:s,parent:d,...f===void 0?{}:{focusable:f},webPreferences:{}});async function A({buildFlavor:e,parent:t}){if(false)return;let i=`Codex`,u=`Build`,y=`Version`,p={htmlIconDataUrl:null},x=false,h=`OK`,m=`About Codex`,S=new l.BrowserWindow({width:q,height:j,useContentSize:!0,title:m,show:!1,resizable:!1,minimizable:!1,maximizable:!1,fullscreenable:!1,autoHideMenuBar:!0,webPreferences:{}});await S.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(H({appDisplayName:i,buildInfoLabel:u,buildInfoText:y,iconDataUrl:p.htmlIconDataUrl,isDark:x,okLabel:h,title:m}))}`)}function H(){return`<button id=\"ok\">OK</button>`}function W(){return[`app-server`,`--analytics-default-enabled`,`wsl`]}\n",
+    "let M,s,d,f,q=360,j=320,U={items:[]},l={BrowserWindow:class{},Menu:{setApplicationMenu(){}}},p0=async()=>null,O=async()=>{let e=l.BrowserWindow.getFocusedWindow();return e&&!e.isDestroyed()?e:p0()},v={sendMessageToWindow(){}},z=async e=>{let t=await O();t&&v.sendMessageToWindow(t,{type:`command-menu`,query:e})},C=[{id:`copy`,electron:{isOverridableByBrowserWebpage:!0}}],A=new Set(C.filter(e=>`electron`in e&&e.electron!=null&&`isOverridableByBrowserWebpage`in e.electron&&e.electron.isOverridableByBrowserWebpage===!0).map(({id:e})=>e)),Q=new Set;for(let e of C)if(!A.has(e.id))Q.add(e.id);new l.BrowserWindow({backgroundColor:M,show:s,parent:d,...f===void 0?{}:{focusable:f},webPreferences:{}});async function A0({buildFlavor:e,parent:t}){if(false)return;let i=`Codex`,u=`Build`,y=`Version`,p={htmlIconDataUrl:null},x=false,h=`OK`,m=`About Codex`,S=new l.BrowserWindow({width:q,height:j,useContentSize:!0,title:m,show:!1,resizable:!1,minimizable:!1,maximizable:!1,fullscreenable:!1,autoHideMenuBar:!0,webPreferences:{}});await S.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(H({appDisplayName:i,buildInfoLabel:u,buildInfoText:y,iconDataUrl:p.htmlIconDataUrl,isDark:x,okLabel:h,title:m}))}`)}l.Menu.setApplicationMenu(U);function H(){return`<button id=\"ok\">OK</button>`}function W(){return[`app-server`,`--analytics-default-enabled`,`wsl`]}\n",
   );
   await createPackage(appSource, join(resourcesRoot, "app.asar"));
 
@@ -196,6 +196,17 @@ test("build and serve the patched upstream interface", async (context) => {
   );
   assert.match(mainSource, /__codex_web_about/);
   assert.match(mainSource, /html:H\(\{appDisplayName:i/);
+  assert.match(mainSource, /__codex_web_keyboard_shortcut/);
+  assert.match(mainSource, /ipcMain\.handle/);
+  assert.match(mainSource, /triggeredByAccelerator: true/);
+  assert.match(mainSource, /codex_desktop:message-for-view/);
+  assert.match(mainSource, /originalSendMessageToWindow/);
+  assert.match(mainSource, /sendMessageToWindow = \(_window, message\)/);
+  assert.match(mainSource, /Q\.has\(normalize\(item\.accelerator\)\)/);
+  assert.match(mainSource, /isOverridableByBrowserWebpage/);
+  assert.match(mainSource, /CODEX_WEB_HEADLESS[\s\S]*BrowserWindow\.getAllWindows\(\)\.find/);
+  assert.match(preloadSource, /dispatchKeyboardShortcut/);
+  assert.match(preloadSource, /getKeyboardShortcuts/);
   assert.match(mainSource, /`-c`,`analytics\.enabled=false`/);
   assert.doesNotMatch(mainSource, /--analytics-default-enabled/);
   assert.match(preloadSource, /CODEX_WEB_APP_SERVER_PROXY/);
@@ -341,6 +352,11 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.match(bridgeSource, /app-host-message/);
   assert.match(bridgeSource, /bootstrap\.sharedObjectSnapshot\[key\]/);
   assert.match(bridgeSource, /__codex_bootstrap/);
+  assert.match(bridgeSource, /keyboardShortcutSignature/);
+  assert.match(bridgeSource, /dispatchKeyboardShortcut/);
+  assert.match(bridgeSource, /getKeyboardShortcuts/);
+  assert.match(bridgeSource, /value\.messages/);
+  assert.match(bridgeSource, /handleHostNotification/);
   assert.doesNotMatch(bridgeSource, /getSentryInitOptions/);
 
   assert.match(bridgeSource, /triggerSentryTestError: \(\) => undefined/);

@@ -4,9 +4,36 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
+export function keyboardShortcutSignature(event, isMacOS) {
+  const modifierKeys = new Set(["Alt", "Control", "Meta", "Shift"]);
+  if (modifierKeys.has(event.key)) return null;
+
+  const specialKeys = new Map([
+    [" ", "space"],
+    ["+", "plus"],
+    ["ArrowDown", "down"],
+    ["ArrowLeft", "left"],
+    ["ArrowRight", "right"],
+    ["ArrowUp", "up"],
+    ["Esc", "escape"],
+    ["Return", "enter"],
+  ]);
+  const key = specialKeys.get(event.key) ?? event.key.toLowerCase();
+  if (key.length === 0) return null;
+
+  const parts = [];
+  if (event.altKey) parts.push(isMacOS ? "option" : "alt");
+  if (event.ctrlKey) parts.push("control");
+  if (event.metaKey) parts.push(isMacOS ? "command" : "super");
+  if (event.shiftKey) parts.push("shift");
+  parts.push(key);
+  return parts.sort().join("+");
+}
+
 const browserBridgeSource = String.raw`
 (() => {
   if (globalThis.electronBridge !== undefined) return;
+  const keyboardShortcutSignature = ${keyboardShortcutSignature.toString()};
 
   const socketUrl = new URL("/__codex_bridge?role=browser", location.href);
   socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
@@ -37,6 +64,8 @@ const browserBridgeSource = String.raw`
   let appHostPort = null;
   let appHostRelayReady = false;
   let nextId = 0;
+  const keyboardShortcuts = new Set();
+  let keyboardShortcutsUseMacModifiers = false;
 
   const opened = new Promise((resolve, reject) => {
     socket.addEventListener("open", resolve, { once: true });
@@ -115,6 +144,21 @@ const browserBridgeSource = String.raw`
     dialog.showModal();
   }
 
+  function handleHostNotification(message) {
+    if (message?.type === "__codex_web_keyboard_shortcuts_updated") {
+      void loadKeyboardShortcuts().catch(() => undefined);
+      return;
+    }
+    if (message?.type === "__codex_web_about") {
+      showAboutDialog(message.html);
+      return;
+    }
+    if (message?.type === "shared-object-updated") {
+      updateSharedObject(message.key, message.value);
+    }
+    window.dispatchEvent(new MessageEvent("message", { data: message }));
+  }
+
   function closeAppHostPort() {
     appHostPort?.close();
     appHostPort = null;
@@ -184,14 +228,7 @@ const browserBridgeSource = String.raw`
       return;
     }
     if (message.type === "notification") {
-      if (message.message?.type === "__codex_web_about") {
-        showAboutDialog(message.message.html);
-        return;
-      }
-      if (message.message?.type === "shared-object-updated") {
-        updateSharedObject(message.message.key, message.message.value);
-      }
-      window.dispatchEvent(new MessageEvent("message", { data: message.message }));
+      handleHostNotification(message.message);
       return;
     }
     if (message.type === "worker-message") {
@@ -236,6 +273,53 @@ const browserBridgeSource = String.raw`
       socket.send(JSON.stringify({ type: "invoke", id, method, args }));
     });
   }
+
+  async function loadKeyboardShortcuts() {
+    const value = await invoke("getKeyboardShortcuts");
+    if (
+      value === null ||
+      typeof value !== "object" ||
+      typeof value.isMacOS !== "boolean" ||
+      !Array.isArray(value.shortcuts) ||
+      !value.shortcuts.every(shortcut => typeof shortcut === "string")
+    ) {
+      throw new Error("The upstream keyboard shortcut registry is invalid");
+    }
+    keyboardShortcutsUseMacModifiers = value.isMacOS;
+    keyboardShortcuts.clear();
+    for (const shortcut of value.shortcuts) keyboardShortcuts.add(shortcut);
+  }
+
+  void loadKeyboardShortcuts().catch(() => undefined);
+  window.addEventListener("focus", () => {
+    void loadKeyboardShortcuts().catch(() => undefined);
+  });
+  window.addEventListener("keydown", event => {
+    const signature = keyboardShortcutSignature(
+      event,
+      keyboardShortcutsUseMacModifiers,
+    );
+    if (signature === null || !keyboardShortcuts.has(signature)) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    void invoke("dispatchKeyboardShortcut", [{
+      signature,
+      altKey: event.altKey,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      repeat: event.repeat,
+      shiftKey: event.shiftKey,
+    }]).then(value => {
+      if (
+        value !== null &&
+        typeof value === "object" &&
+        Array.isArray(value.messages)
+      ) {
+        for (const message of value.messages) handleHostNotification(message);
+      }
+    }).catch(() => undefined);
+  }, { capture: true });
 
   function unsupported(operation) {
     const error = new Error("Unsupported Electron operation in codex-web: " + operation);
@@ -319,6 +403,8 @@ const browserBridgeSource = String.raw`
 
 function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
   const allowedMethods = [
+    "dispatchKeyboardShortcut",
+    "getKeyboardShortcuts",
     "sendMessageFromView",
     "sendWorkerMessageFromView",
     "getFastModeRolloutMetrics",
@@ -398,9 +484,20 @@ function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
           return;
         }
         try {
-          const value = await ${bridgeAlias}[message.method](
-            ...(Array.isArray(message.args) ? message.args : []),
-          );
+          const keyboardShortcutMethod =
+            message.method === "dispatchKeyboardShortcut" ||
+            message.method === "getKeyboardShortcuts";
+          const value = keyboardShortcutMethod
+            ? await ${electronAlias}.ipcRenderer.invoke(
+                "__codex_web_keyboard_shortcut",
+                {
+                  type: message.method === "getKeyboardShortcuts" ? "list" : "dispatch",
+                  event: Array.isArray(message.args) ? message.args[0] : undefined,
+                },
+              )
+            : await ${bridgeAlias}[message.method](
+                ...(Array.isArray(message.args) ? message.args : []),
+              );
           send({ type: "result", id: message.id, ok: true, value });
         } catch (error) {
           send({
@@ -583,6 +680,118 @@ function patchPreload(source) {
   );
 }
 
+function keyboardShortcutMainSource(
+  electronAlias,
+  menuAlias,
+  windowManagerAlias,
+  browserShortcutSetAlias,
+) {
+  return `(() => {
+    const channel = "__codex_web_keyboard_shortcut";
+    const normalize = accelerator => accelerator.split("+").map(part => {
+      switch (part.toLowerCase()) {
+        case "cmdorctrl":
+        case "commandorcontrol":
+          return process.platform === "darwin" ? "command" : "control";
+        case "cmd":
+        case "command":
+          return "command";
+        case "control":
+        case "ctrl":
+          return "control";
+        case "option":
+          return process.platform === "darwin" ? "option" : "alt";
+        case "alt":
+          return "alt";
+        case "meta":
+        case "super":
+          return process.platform === "darwin" ? "command" : "super";
+        case "enter":
+        case "return":
+          return "enter";
+        case "esc":
+        case "escape":
+          return "escape";
+        case "plus":
+          return "plus";
+        default:
+          return part.toLowerCase();
+      }
+    }).sort().join("+");
+    const collect = menu => menu.items.flatMap(item => [
+      item,
+      ...(item.submenu == null ? [] : collect(item.submenu)),
+    ]);
+    let dispatchQueue = Promise.resolve();
+    ${electronAlias}.ipcMain.removeHandler(channel);
+    ${electronAlias}.ipcMain.handle(channel, async (_event, request) => {
+      const items = collect(${menuAlias}).filter(
+        item =>
+          typeof item.accelerator === "string" &&
+          typeof item.click === "function" &&
+          ${browserShortcutSetAlias}.has(normalize(item.accelerator)),
+      );
+      const shortcuts = new Map(items.map(item => [normalize(item.accelerator), item]));
+      if (request?.type === "list") {
+        return {
+          isMacOS: process.platform === "darwin",
+          shortcuts: [...shortcuts.keys()],
+        };
+      }
+      if (
+        request?.type !== "dispatch" ||
+        typeof request.event?.signature !== "string"
+      ) {
+        return false;
+      }
+      const item = shortcuts.get(request.event.signature);
+      if (item === undefined || item.enabled === false) {
+        return { handled: false, messages: [] };
+      }
+      const dispatch = async () => {
+        const windows = ${electronAlias}.BrowserWindow.getAllWindows().filter(
+          window => !window.isDestroyed(),
+        );
+        const messages = [];
+        const originalSendMessageToWindow =
+          ${windowManagerAlias}.sendMessageToWindow;
+        ${windowManagerAlias}.sendMessageToWindow = (_window, message) => {
+          messages.push(message);
+        };
+        try {
+          const browserWindow =
+            ${electronAlias}.BrowserWindow.fromWebContents(_event.sender) ??
+            ${electronAlias}.BrowserWindow.getFocusedWindow() ??
+            windows[0];
+          await item.click(item, browserWindow, {
+            triggeredByAccelerator: true,
+            altKey: request.event.altKey === true,
+            ctrlKey: request.event.ctrlKey === true,
+            metaKey: request.event.metaKey === true,
+            repeat: request.event.repeat === true,
+            shiftKey: request.event.shiftKey === true,
+          });
+          return { handled: true, messages };
+        } finally {
+          ${windowManagerAlias}.sendMessageToWindow =
+            originalSendMessageToWindow;
+        }
+      };
+      const result = dispatchQueue.then(dispatch, dispatch);
+      dispatchQueue = result.then(() => undefined, () => undefined);
+      return result;
+    });
+    for (const window of ${electronAlias}.BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send(
+          "codex_desktop:message-for-view",
+          { type: "__codex_web_keyboard_shortcuts_updated" },
+        );
+      }
+    }
+  })()`;
+}
+
 function patchMainProcess(source) {
   if (source.includes("CODEX_WEB_HEADLESS")) {
     return source;
@@ -624,6 +833,42 @@ function patchMainProcess(source) {
     );
   }
 
+  const applicationMenuPattern =
+    /([A-Za-z_$][\w$]*)\.Menu\.setApplicationMenu\(([A-Za-z_$][\w$]*)\)/g;
+  const applicationMenuMatches = [...source.matchAll(applicationMenuPattern)];
+  if (applicationMenuMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream application menu installation, found ${applicationMenuMatches.length}`,
+    );
+  }
+
+  const menuTargetPattern =
+    /([A-Za-z_$][\w$]*)=async\(\)=>\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.BrowserWindow\.getFocusedWindow\(\);return \2&&!\2\.isDestroyed\(\)\?\2:([A-Za-z_$][\w$]*)\(\)\}/g;
+  const menuTargetMatches = [...source.matchAll(menuTargetPattern)];
+  if (menuTargetMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream application menu target resolver, found ${menuTargetMatches.length}`,
+    );
+  }
+
+  const commandMenuMessagePattern =
+    /([A-Za-z_$][\w$]*)\.sendMessageToWindow\([A-Za-z_$][\w$]*,\{type:`command-menu`,query:[A-Za-z_$][\w$]*\}\)/g;
+  const commandMenuMessageMatches = [...source.matchAll(commandMenuMessagePattern)];
+  if (commandMenuMessageMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream command menu message sender, found ${commandMenuMessageMatches.length}`,
+    );
+  }
+
+  const browserShortcutSetPattern =
+    /`isOverridableByBrowserWebpage`in [\s\S]{0,600}?\)\),([A-Za-z_$][\w$]*)=new Set;for\(let/g;
+  const browserShortcutSetMatches = [...source.matchAll(browserShortcutSetPattern)];
+  if (browserShortcutSetMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream browser shortcut set, found ${browserShortcutSetMatches.length}`,
+    );
+  }
+
   const [match, backgroundAlias, showAlias, parentAlias, focusableAlias] =
     matches[0];
   const replacement =
@@ -641,9 +886,36 @@ function patchMainProcess(source) {
     `);return}let ${aboutWindowAlias}=${aboutWindowHeader.slice(
       aboutWindowHeader.indexOf("new "),
     )}`;
+  const [applicationMenuSource, electronAlias, menuAlias] =
+    applicationMenuMatches[0];
+  const windowManagerAlias = commandMenuMessageMatches[0][1];
+  const browserShortcutSetAlias = browserShortcutSetMatches[0][1];
+  const applicationMenuReplacement =
+    `${applicationMenuSource},${keyboardShortcutMainSource(
+      electronAlias,
+      menuAlias,
+      windowManagerAlias,
+      browserShortcutSetAlias,
+    )}`;
+  const [
+    menuTargetSource,
+    menuTargetFunctionAlias,
+    focusedWindowAlias,
+    menuElectronAlias,
+    ensureWindowAlias,
+  ] = menuTargetMatches[0];
+  const menuTargetReplacement =
+    `${menuTargetFunctionAlias}=async()=>{let ${focusedWindowAlias}=` +
+    `${menuElectronAlias}.BrowserWindow.getFocusedWindow();return ` +
+    `${focusedWindowAlias}&&!${focusedWindowAlias}.isDestroyed()?${focusedWindowAlias}:` +
+    `process.env.CODEX_WEB_HEADLESS===\`1\`?` +
+    `${menuElectronAlias}.BrowserWindow.getAllWindows().find(window=>!window.isDestroyed())??` +
+    `${ensureWindowAlias}():${ensureWindowAlias}()}`;
   return source
     .replace(match, replacement)
-    .replace(aboutWindowHeader, aboutWindowReplacement);
+    .replace(aboutWindowHeader, aboutWindowReplacement)
+    .replace(applicationMenuSource, applicationMenuReplacement)
+    .replace(menuTargetSource, menuTargetReplacement);
 }
 
 function patchWebviewRenderer(source) {
