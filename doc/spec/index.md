@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: SPEC-5
+  revision: SPEC-6
   files: []
 ---
 
@@ -32,9 +32,14 @@ Acceptance:
 
 - The start entry point reports its capability URL.
 - Opening that URL renders the upstream Codex interface without a replacement application shell.
+- An unauthenticated request for `/` renders a connection page that accepts the complete reported capability URL.
+- Continuing with a valid capability URL performs the existing capability exchange and opens the upstream interface.
+- Continuing with an invalid capability URL leaves the connection page visible with a clear error.
+- The connection page does not disclose the capability or grant access without a valid capability.
+- Unauthenticated requests for protected application assets, bootstrap data, and unknown paths remain unsuccessful.
 - The service binds to `127.0.0.1` and a random available port by default.
 - Explicit `--host` and `--port` options override both listener values.
-- Invalid host, port, Host header, origin, or capability values fail without opening an unauthenticated browser path.
+- Invalid host, port, Host header, origin, or capability values fail without opening an unauthenticated application path.
 - A browser request for an unknown application asset does not return the main HTML document as false success.
 
 ## REQ-PROJECT-001 — Browse local project folders

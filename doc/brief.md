@@ -28,8 +28,9 @@ The user builds the wrapper from a local `Codex.dmg`.
 
 The user starts one local service.
 
-The user opens the capability URL reported by the start or deployment entry point.
+The user opens the capability URL reported by the start or deployment entry point, or enters that complete URL in the unauthenticated landing page.
 
+An unauthenticated browser at the application root sees a connection page instead of a plain capability error.
 The browser displays the extracted upstream Codex interface.
 The local Create project dialog shows the same source-folder browser as New remote project, without a remote-host field.
 

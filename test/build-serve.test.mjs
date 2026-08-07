@@ -252,7 +252,26 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.match(cookie, /^codex_web_cap=/);
 
   const unauthenticated = await fetch(new URL("/", server.url));
-  assert.equal(unauthenticated.status, 403);
+  assert.equal(unauthenticated.status, 200);
+  assert.equal(
+    unauthenticated.headers.get("content-type"),
+    "text/html; charset=utf-8",
+  );
+  const landingPage = await unauthenticated.text();
+  assert.match(landingPage, /Connect this app/);
+  assert.match(landingPage, /Capability URL/);
+  assert.match(landingPage, /Open Codex/);
+  assert.equal(landingPage.includes(server.capability), false);
+
+  const invalidCapability = await fetch(new URL("/?cap=invalid", server.url));
+  assert.equal(invalidCapability.status, 200);
+  assert.match(
+    await invalidCapability.text(),
+    /That capability URL is not valid for this codex-web service/,
+  );
+
+  const protectedAsset = await fetch(new URL("/manifest.json", server.url));
+  assert.equal(protectedAsset.status, 403);
 
   const authenticatedHeaders = { Cookie: cookie.split(";")[0] };
   const unavailableBootstrap = await fetch(

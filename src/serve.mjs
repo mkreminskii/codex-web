@@ -58,6 +58,219 @@ function setSecurityHeaders(response) {
   response.setHeader("X-Frame-Options", "DENY");
 }
 
+function createCapabilityLandingPage(showError) {
+  const errorMessage = showError
+    ? "That capability URL is not valid for this codex-web service. Copy the complete URL from the host and try again."
+    : "";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connect to codex-web</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+      --color-text: #0d0d0d;
+      --color-text-secondary: #5d5d5d;
+      --color-surface: #ffffff;
+      --color-surface-secondary: #f3f3f3;
+      --color-border: rgba(13, 13, 13, 0.12);
+      --color-focus: rgba(51, 159, 255, 0.7);
+      --color-danger: #c83232;
+      --color-button: #0d0d0d;
+      --color-button-hover: #303030;
+      --color-button-text: #ffffff;
+      font-family: var(--font-sans);
+      color: var(--color-text);
+      background: var(--color-surface);
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: var(--color-surface);
+    }
+    main {
+      width: min(100%, 440px);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      background: var(--color-surface-secondary);
+      overflow: hidden;
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 28px 32px 0;
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.4;
+    }
+    .status::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--color-text-secondary);
+      content: "";
+    }
+    .content { padding: 18px 32px 32px; }
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 600;
+      line-height: 1.25;
+      letter-spacing: -0.025em;
+    }
+    .intro {
+      margin: 10px 0 28px;
+      color: var(--color-text-secondary);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    input {
+      width: 100%;
+      min-height: 48px;
+      padding: 12px 14px;
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      outline: none;
+      color: var(--color-text);
+      background: var(--color-surface);
+      font: 13px/1.4 var(--font-mono);
+    }
+    input::placeholder { color: var(--color-text-secondary); }
+    input:focus {
+      border-color: var(--color-focus);
+      box-shadow: 0 0 0 1px var(--color-focus);
+    }
+    button {
+      width: 100%;
+      min-height: 44px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--color-button-text);
+      background: var(--color-button);
+      font: 500 14px/1 var(--font-sans);
+      cursor: pointer;
+    }
+    button:hover { background: var(--color-button-hover); }
+    button:focus-visible {
+      outline: 2px solid var(--color-focus);
+      outline-offset: 2px;
+    }
+    .error {
+      margin: 12px 0 0;
+      color: var(--color-danger);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .error:empty { display: none; }
+    .privacy {
+      margin: 20px 0 0;
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --color-text: #ffffff;
+        --color-text-secondary: rgba(255, 255, 255, 0.65);
+        --color-surface: #212121;
+        --color-surface-secondary: #181818;
+        --color-border: rgba(255, 255, 255, 0.08);
+        --color-danger: #ff8585;
+        --color-button: #ffffff;
+        --color-button-hover: #ededed;
+        --color-button-text: #0d0d0d;
+      }
+    }
+    @media (max-width: 480px) {
+      body {
+        display: block;
+        padding: 0;
+        background: var(--color-surface-secondary);
+      }
+      main {
+        width: 100%;
+        min-height: 100vh;
+        border: 0;
+        border-radius: 0;
+      }
+      .status { padding: 28px 24px 0; }
+      .content { padding: 18px 24px 28px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="status">Connection required</div>
+    <div class="content">
+      <h1>Connect this app.</h1>
+      <p class="intro">Paste the complete capability URL shown by codex-web on the host.</p>
+      <form id="capability-form" novalidate>
+        <label for="capability-url">Capability URL</label>
+        <input id="capability-url" name="capability-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:…/?cap=…" aria-describedby="capability-error">
+        <button type="submit">Open Codex</button>
+        <p class="error" id="capability-error" role="alert">${errorMessage}</p>
+      </form>
+      <p class="privacy">The capability is exchanged for a protected browser cookie. This page does not store it.</p>
+    </div>
+  </main>
+  <script>
+    const form = document.querySelector("#capability-form");
+    const input = document.querySelector("#capability-url");
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+
+      let capabilityUrl;
+      try {
+        capabilityUrl = new URL(input.value.trim());
+      } catch {
+        input.setCustomValidity("Paste the complete capability URL.");
+        input.reportValidity();
+        return;
+      }
+
+      const parameters = [...capabilityUrl.searchParams.keys()];
+      if (
+        capabilityUrl.origin !== window.location.origin ||
+        capabilityUrl.pathname !== "/" ||
+        capabilityUrl.hash !== "" ||
+        parameters.length !== 1 ||
+        parameters[0] !== "cap" ||
+        capabilityUrl.searchParams.get("cap") === ""
+      ) {
+        input.setCustomValidity("Use the complete capability URL for this codex-web service.");
+        input.reportValidity();
+        return;
+      }
+
+      input.setCustomValidity("");
+      window.location.assign(capabilityUrl.href);
+    });
+
+    input.addEventListener("input", () => input.setCustomValidity(""));
+  </script>
+</body>
+</html>`;
+}
+
 function sendText(response, statusCode, text) {
   const payload = Buffer.from(`${text}\n`);
   response.writeHead(statusCode, {
@@ -65,6 +278,15 @@ function sendText(response, statusCode, text) {
     "Content-Length": payload.length,
   });
   response.end(payload);
+}
+
+function sendHtml(request, response, html) {
+  const payload = Buffer.from(html);
+  response.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": payload.length,
+  });
+  response.end(request.method === "HEAD" ? undefined : payload);
 }
 
 function resolveAssetPath(webviewRoot, pathname) {
@@ -236,6 +458,14 @@ export async function startWebServer({
     }
 
     if (!hasCapability(request, capability)) {
+      if (url.pathname === "/") {
+        sendHtml(
+          request,
+          response,
+          createCapabilityLandingPage(presentedCapability !== null),
+        );
+        return;
+      }
       sendText(response, 403, "Browser capability required");
       return;
     }
