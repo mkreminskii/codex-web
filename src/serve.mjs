@@ -53,6 +53,7 @@ function setSecurityHeaders(response) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
   response.setHeader("Pragma", "no-cache");
   response.setHeader("Referrer-Policy", "no-referrer");
+  response.setHeader("Content-Security-Policy", "manifest-src 'self'");
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("X-Frame-Options", "DENY");
 }

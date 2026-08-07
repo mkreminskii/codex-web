@@ -726,15 +726,53 @@ function patchBrowserSidePanelAction(source) {
   );
 }
 
+function createPwaIconSvg(png, size) {
+  const source = png.toString("base64");
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`,
+    `  <image width="${size}" height="${size}" href="data:image/png;base64,${source}" />`,
+    "</svg>",
+    "",
+  ].join("\n");
+}
+
 function patchWebviewIndex(source) {
-  if (source.includes("__codex_browser_bridge.js")) {
-    return source;
+  let patched = source.replace(
+    /(<meta\s+http-equiv=["']Content-Security-Policy["']\s+content=")([^"]*)("[^>]*>)/i,
+    (meta, prefix, policy, suffix) => {
+      if (/(?:^|;)\s*manifest-src\s/i.test(policy)) {
+        return meta;
+      }
+      const separator = policy.trimEnd().endsWith(";") ? " " : "; ";
+      return `${prefix}${policy}${separator}manifest-src 'self'${suffix}`;
+    },
+  );
+
+  const manifestTag =
+    '<link rel="manifest" href="/manifest.json" crossorigin="use-credentials" />';
+  patched = patched.replace(/<link\s+rel=["']manifest["'][^>]*>/i, tag => {
+    if (/\bcrossorigin=/.test(tag)) {
+      return tag;
+    }
+    return tag.replace(/\s*\/?>$/, ' crossorigin="use-credentials" />');
+  });
+
+  const headTags = [];
+  if (!/<link\s+rel=["']manifest["']/i.test(patched)) {
+    headTags.push(manifestTag);
   }
-  const tag = '<script src="./__codex_browser_bridge.js"></script>';
-  if (source.includes("</head>")) {
-    return source.replace("</head>", `${tag}</head>`);
+  if (!patched.includes("__codex_browser_bridge.js")) {
+    headTags.push('<script src="./__codex_browser_bridge.js"></script>');
   }
-  throw new Error("Upstream webview index has no closing head element");
+  if (headTags.length === 0) {
+    return patched;
+  }
+  if (!patched.includes("</head>")) {
+    throw new Error("Upstream webview index has no closing head element");
+  }
+
+  patched = patched.replace("</head>", `    ${headTags.join("\n    ")}\n  </head>`);
+  return patched;
 }
 
 export async function applyUpstreamWebPatches(upstreamRoot) {
@@ -762,6 +800,12 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     throw new Error(
       `Expected one upstream webview renderer bundle, found ${rendererCandidates.length}`,
     );
+  }
+  const iconCandidates = assetEntries.filter(
+    name => name.startsWith("app-") && name.endsWith(".png"),
+  );
+  if (iconCandidates.length !== 1) {
+    throw new Error(`Expected one upstream app icon, found ${iconCandidates.length}`);
   }
 
   const sidePanelFiles = await Promise.all(
@@ -791,8 +835,9 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
   const rendererPath = join(assetsRoot, rendererCandidates[0]);
   const sidePanelPath = join(assetsRoot, sidePanelCandidates[0].name);
   const bridgePath = join(webviewRoot, "__codex_browser_bridge.js");
+  const iconPath = join(assetsRoot, iconCandidates[0]);
 
-  const [preload, mainProcess, index, renderer, sidePanel] = await Promise.all([
+  const [preload, mainProcess, index, renderer, sidePanel, appIcon] = await Promise.all([
     appServerTransport.path === preloadPath
       ? appServerTransport.source
       : readFile(preloadPath, "utf8"),
@@ -802,12 +847,37 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     readFile(indexPath, "utf8"),
     readFile(rendererPath, "utf8"),
     sidePanelCandidates[0].source,
+    readFile(iconPath),
   ]);
   let patchedPreload = patchPreload(preload);
   let patchedMainProcess = patchMainProcess(mainProcess);
   const patchedIndex = patchWebviewIndex(index);
   const patchedRenderer = patchProfilePetAction(patchWebviewRenderer(renderer));
   const patchedSidePanel = patchBrowserSidePanelAction(sidePanel);
+  const webManifest = `${JSON.stringify(
+    {
+      name: "Codex",
+      short_name: "Codex",
+      icons: [
+        {
+          src: "/icon-192.svg",
+          sizes: "192x192",
+          type: "image/svg+xml",
+        },
+        {
+          src: "/icon-512.svg",
+          sizes: "512x512",
+          type: "image/svg+xml",
+        },
+      ],
+      start_url: "/",
+      display: "standalone",
+      background_color: "#000000",
+      theme_color: "#000000",
+    },
+    null,
+    2,
+  )}\n`;
   let patchedAppServerTransport = null;
   if (appServerTransport.path === preloadPath) {
     patchedPreload = patchAppServerTransport(patchedPreload);
@@ -824,6 +894,9 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     writeFile(rendererPath, patchedRenderer),
     writeFile(sidePanelPath, patchedSidePanel),
     writeFile(bridgePath, browserBridgeSource),
+    writeFile(join(webviewRoot, "manifest.json"), webManifest),
+    writeFile(join(webviewRoot, "icon-192.svg"), createPwaIconSvg(appIcon, 192)),
+    writeFile(join(webviewRoot, "icon-512.svg"), createPwaIconSvg(appIcon, 512)),
     ...(patchedAppServerTransport === null
       ? []
       : [writeFile(appServerTransport.path, patchedAppServerTransport)]),

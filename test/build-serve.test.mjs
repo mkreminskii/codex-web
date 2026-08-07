@@ -62,9 +62,16 @@ async function createSyntheticDmg(root) {
   );
   await writeFile(
     join(webviewRoot, "index.html"),
-    "<!doctype html><html><head><title>Upstream Codex</title></head><body><main>upstream interface</main></body></html>\n",
+    "<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'\"><link rel=\"manifest\" href=\"/manifest.json\" /><title>Upstream Codex</title></head><body><main>upstream interface</main></body></html>\n",
   );
   await writeFile(join(webviewRoot, "app.js"), "globalThis.codexFixture = true;\n");
+  await writeFile(
+    join(assetsRoot, "app-fixture.png"),
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
   await writeFile(
     join(assetsRoot, "app-initial-fixture.js"),
     "function Lrc(e){let{sources:n,setSources:r}=e;lp(`workspace-root-option-picked`,()=>{});let k=(0,PQ.jsx)(Z,{id:`projectSetup.createLocalProject.sourceFoldersLabel`});return(0,PQ.jsxs)(jP,{className:`gap-2`,children:[k,`fixture`]})}function Rrc(){dp.dispatchMessage(`electron-pick-workspace-root-option`,{allowMultiple:!0})}function Lcc(e){return yp(`remote-workspace-directory-entries`,e)}var Hcc,Ucc,Wcc,qQ,Gcc,Kcc=n((()=>{}));function P(e){let t=(0,C.c)(32),{isPetVisible:s,onTogglePet:p}=e;let x;t[11]!==s||t[12]!==p?(x=p==null?null:(0,J.jsx)(AR,{children:s?(0,J.jsx)(Z,{id:`codex.profileFooter.hidePet`,defaultMessage:`Hide pet`}):(0,J.jsx)(Z,{id:`codex.profileFooter.showPet`,defaultMessage:`Show pet`})}),t[11]=s,t[12]=p,t[13]=x):x=t[13];let S;t[14]===x?S=t[15]:(S=(0,J.jsx)(J.Fragment,{children:x}),t[14]=x,t[15]=S);let w=(0,J.jsx)(Z,{id:`settings`});return(0,J.jsxs)(`div`,{children:[h,S,w]})}\n",
@@ -143,9 +150,28 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.equal(result.manifest.applicationName, "Codex");
   assert.equal(result.manifest.applicationVersion, "1.2.3-test");
   assert.equal(result.manifest.electronVersion, "42.3.0");
+  const patchedIndex = await readFile(
+    join(result.outputRoot, "upstream", "webview", "index.html"),
+    "utf8",
+  );
+  assert.match(patchedIndex, /__codex_browser_bridge\.js/);
+  assert.match(patchedIndex, /rel="manifest" href="\/manifest\.json" crossorigin="use-credentials"/);
+  assert.match(patchedIndex, /default-src 'none'; manifest-src 'self'/);
+  const webManifest = JSON.parse(
+    await readFile(join(result.outputRoot, "upstream", "webview", "manifest.json"), "utf8"),
+  );
+  assert.equal(webManifest.start_url, "/");
+  assert.equal(webManifest.display, "standalone");
+  assert.deepEqual(
+    webManifest.icons.map(({ src, sizes }) => ({ src, sizes })),
+    [
+      { src: "/icon-192.svg", sizes: "192x192" },
+      { src: "/icon-512.svg", sizes: "512x512" },
+    ],
+  );
   assert.match(
-    await readFile(join(result.outputRoot, "upstream", "webview", "index.html"), "utf8"),
-    /__codex_browser_bridge\.js/,
+    await readFile(join(result.outputRoot, "upstream", "webview", "icon-512.svg"), "utf8"),
+    /width="512" height="512"/,
   );
   const preloadSource = await readFile(
     join(result.outputRoot, "upstream", ".vite", "build", "preload.js"),
@@ -237,6 +263,23 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.equal(page.status, 200);
   assert.match(await page.text(), /upstream interface/);
   assert.equal(page.headers.get("x-frame-options"), "DENY");
+  assert.equal(page.headers.get("content-security-policy"), "manifest-src 'self'");
+
+  const webManifestResponse = await fetch(new URL("/manifest.json", server.url), {
+    headers: { Cookie: cookie.split(";")[0] },
+  });
+  assert.equal(webManifestResponse.status, 200);
+  assert.equal(
+    webManifestResponse.headers.get("content-type"),
+    "application/json; charset=utf-8",
+  );
+  assert.equal((await webManifestResponse.json()).display, "standalone");
+
+  const installIcon = await fetch(new URL("/icon-512.svg", server.url), {
+    headers: { Cookie: cookie.split(";")[0] },
+  });
+  assert.equal(installIcon.status, 200);
+  assert.equal(installIcon.headers.get("content-type"), "image/svg+xml");
 
   const bridge = await fetch(
     new URL("/__codex_browser_bridge.js", server.url),
