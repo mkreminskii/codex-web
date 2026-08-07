@@ -63,6 +63,58 @@ const browserBridgeSource = String.raw`
     bootstrap.sharedObjectSnapshot[key] = value;
   }
 
+  function showAboutDialog(html) {
+    if (typeof html !== "string") return;
+
+    document.getElementById("__codex_web_about_dialog")?.remove();
+    const dialog = document.createElement("dialog");
+    const frame = document.createElement("iframe");
+    const title = new DOMParser().parseFromString(html, "text/html").title;
+    dialog.id = "__codex_web_about_dialog";
+    dialog.setAttribute("aria-label", title);
+    dialog.style.cssText =
+      "border:0;border-radius:12px;inset:auto;left:50%;margin:0;max-height:calc(100vh - 32px);max-width:calc(100vw - 32px);overflow:auto;padding:0;position:fixed;top:50%;transform:translate(-50%,-50%)";
+    frame.title = title;
+    frame.style.cssText = "border:0;display:block;width:min(360px,calc(100vw - 32px))";
+    frame.srcdoc = html;
+
+    const close = () => {
+      if (dialog.open) dialog.close();
+    };
+    dialog.addEventListener("cancel", event => {
+      event.preventDefault();
+      close();
+    });
+    dialog.addEventListener("click", event => {
+      if (event.target === dialog) close();
+    });
+    dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    frame.addEventListener("load", () => {
+      const contentDocument = frame.contentDocument;
+      if (contentDocument === null) return;
+      frame.style.height =
+        Math.ceil(contentDocument.documentElement.scrollHeight) + "px";
+      contentDocument.addEventListener("click", event => {
+        const ok = event.target?.closest?.("#ok");
+        if (ok === null || ok === undefined) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        close();
+      }, { capture: true });
+      contentDocument.addEventListener("keydown", event => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        close();
+      }, { capture: true });
+      contentDocument.getElementById("ok")?.focus();
+    });
+
+    dialog.append(frame);
+    document.body.append(dialog);
+    dialog.showModal();
+  }
+
   function closeAppHostPort() {
     appHostPort?.close();
     appHostPort = null;
@@ -132,6 +184,10 @@ const browserBridgeSource = String.raw`
       return;
     }
     if (message.type === "notification") {
+      if (message.message?.type === "__codex_web_about") {
+        showAboutDialog(message.message.html);
+        return;
+      }
       if (message.message?.type === "shared-object-updated") {
         updateSharedObject(message.message.key, message.message.value);
       }
@@ -309,7 +365,10 @@ function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
     };
 
     window.addEventListener("message", event => {
-      if (event.source == null) {
+      if (
+        event.source == null ||
+        (event.source === window && event.data?.type === "__codex_web_about")
+      ) {
         send({ type: "notification", message: event.data });
       }
     });
@@ -538,12 +597,53 @@ function patchMainProcess(source) {
     );
   }
 
+  const aboutDialogPattern =
+    /async function [A-Za-z_$][\w$]*\(\{buildFlavor:[A-Za-z_$][\w$]*,parent:([A-Za-z_$][\w$]*)\}\)\{/g;
+  const aboutDialogMatches = [...source.matchAll(aboutDialogPattern)];
+  if (aboutDialogMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream About dialog handler, found ${aboutDialogMatches.length}`,
+    );
+  }
+
+  const aboutWindowPattern =
+    /,([A-Za-z_$][\w$]*)=new [A-Za-z_$][\w$]*\.BrowserWindow\(\{width:[A-Za-z_$][\w$]*,height:[A-Za-z_$][\w$]*,useContentSize:!0,title:[A-Za-z_$][\w$]*,show:!1,resizable:!1,minimizable:!1,maximizable:!1,fullscreenable:!1,autoHideMenuBar:!0,/g;
+  const aboutWindowMatches = [...source.matchAll(aboutWindowPattern)];
+  if (aboutWindowMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream About dialog window, found ${aboutWindowMatches.length}`,
+    );
+  }
+
+  const aboutHtmlPattern =
+    /[A-Za-z_$][\w$]*\(\{appDisplayName:[A-Za-z_$][\w$]*,buildInfoLabel:[A-Za-z_$][\w$]*,buildInfoText:[A-Za-z_$][\w$]*,iconDataUrl:[A-Za-z_$][\w$]*\.htmlIconDataUrl,isDark:[A-Za-z_$][\w$]*,okLabel:[A-Za-z_$][\w$]*,title:[A-Za-z_$][\w$]*\}\)/g;
+  const aboutHtmlMatches = [...source.matchAll(aboutHtmlPattern)];
+  if (aboutHtmlMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream About dialog HTML payload, found ${aboutHtmlMatches.length}`,
+    );
+  }
+
   const [match, backgroundAlias, showAlias, parentAlias, focusableAlias] =
     matches[0];
   const replacement =
     `backgroundColor:${backgroundAlias},show:process.env.CODEX_WEB_HEADLESS===\`1\`?!1:${showAlias},` +
     `parent:${parentAlias},...${focusableAlias}===void 0?{}:{focusable:${focusableAlias}}`;
-  return source.replace(match, replacement);
+  const aboutParentAlias = aboutDialogMatches[0][1];
+  const aboutWindowHeader = aboutWindowMatches[0][0];
+  const aboutWindowAlias = aboutWindowMatches[0][1];
+  const aboutHtmlSource = aboutHtmlMatches[0][0];
+  const aboutWindowReplacement =
+    `;if(process.env.CODEX_WEB_HEADLESS===\`1\`){` +
+    `if(${aboutParentAlias}!=null&&!${aboutParentAlias}.isDestroyed())` +
+    `await ${aboutParentAlias}.webContents.executeJavaScript(` +
+    `\`window.postMessage(\${JSON.stringify({type:"__codex_web_about",html:${aboutHtmlSource}})},location.origin)\`` +
+    `);return}let ${aboutWindowAlias}=${aboutWindowHeader.slice(
+      aboutWindowHeader.indexOf("new "),
+    )}`;
+  return source
+    .replace(match, replacement)
+    .replace(aboutWindowHeader, aboutWindowReplacement);
 }
 
 function patchWebviewRenderer(source) {

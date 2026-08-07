@@ -98,7 +98,7 @@ async function createSyntheticDmg(root) {
   );
   await writeFile(
     join(buildRoot, "main-fixture.js"),
-    "let M,s,d,f,l={BrowserWindow:class{}};new l.BrowserWindow({backgroundColor:M,show:s,parent:d,...f===void 0?{}:{focusable:f},webPreferences:{}});function W(){return[`app-server`,`--analytics-default-enabled`,`wsl`]}\n",
+    "let M,s,d,f,q=360,j=320,l={BrowserWindow:class{}};new l.BrowserWindow({backgroundColor:M,show:s,parent:d,...f===void 0?{}:{focusable:f},webPreferences:{}});async function A({buildFlavor:e,parent:t}){if(false)return;let i=`Codex`,u=`Build`,y=`Version`,p={htmlIconDataUrl:null},x=false,h=`OK`,m=`About Codex`,S=new l.BrowserWindow({width:q,height:j,useContentSize:!0,title:m,show:!1,resizable:!1,minimizable:!1,maximizable:!1,fullscreenable:!1,autoHideMenuBar:!0,webPreferences:{}});await S.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(H({appDisplayName:i,buildInfoLabel:u,buildInfoText:y,iconDataUrl:p.htmlIconDataUrl,isDark:x,okLabel:h,title:m}))}`)}function H(){return`<button id=\"ok\">OK</button>`}function W(){return[`app-server`,`--analytics-default-enabled`,`wsl`]}\n",
   );
   await createPackage(appSource, join(resourcesRoot, "app.asar"));
 
@@ -188,6 +188,12 @@ test("build and serve the patched upstream interface", async (context) => {
     "utf8",
   );
   assert.match(mainSource, /CODEX_WEB_HEADLESS/);
+  assert.match(
+    mainSource,
+    /if\(process\.env\.CODEX_WEB_HEADLESS===`1`\)\{[\s\S]*webContents\.executeJavaScript[\s\S]*;return\}let S=new l\.BrowserWindow/,
+  );
+  assert.match(mainSource, /__codex_web_about/);
+  assert.match(mainSource, /html:H\(\{appDisplayName:i/);
   assert.match(mainSource, /`-c`,`analytics\.enabled=false`/);
   assert.doesNotMatch(mainSource, /--analytics-default-enabled/);
   assert.match(preloadSource, /CODEX_WEB_APP_SERVER_PROXY/);
@@ -308,6 +314,14 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.doesNotMatch(bridgeSource, /bootstrap\.sentryInitOptions/);
   assert.doesNotMatch(bridgeSource, /window\.prompt/);
   assert.doesNotMatch(bridgeSource, /showContextMenu/);
+  assert.match(bridgeSource, /createElement\("dialog"\)/);
+  assert.match(bridgeSource, /showModal\(\)/);
+  assert.match(bridgeSource, /__codex_web_about_dialog/);
+  assert.match(bridgeSource, /frame\.srcdoc = html/);
+  assert.match(
+    bridgeSource,
+    /left:50%;margin:0;[\s\S]*position:fixed;top:50%;transform:translate\(-50%,-50%\)/,
+  );
   assert.doesNotMatch(bridgeSource, /workspace-root-option-picked/);
 
   const missing = await fetch(new URL("/missing", server.url), {
