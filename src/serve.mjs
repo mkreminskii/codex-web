@@ -13,9 +13,25 @@ import {
 } from "./network-options.mjs";
 
 const mimeTypes = new Map([
+  [".aac", "audio/aac"],
+  [".avif", "image/avif"],
+  [".avi", "video/x-msvideo"],
+  [".bmp", "image/bmp"],
   [".css", "text/css; charset=utf-8"],
+  [".flac", "audio/flac"],
+  [".gif", "image/gif"],
   [".html", "text/html; charset=utf-8"],
   [".ico", "image/x-icon"],
+  [".m4a", "audio/mp4"],
+  [".m4v", "video/mp4"],
+  [".mov", "video/quicktime"],
+  [".mp3", "audio/mpeg"],
+  [".mp4", "video/mp4"],
+  [".mpeg", "video/mpeg"],
+  [".mpg", "video/mpeg"],
+  [".ogg", "audio/ogg"],
+  [".ogv", "video/ogg"],
+  [".opus", "audio/ogg"],
   [".jpeg", "image/jpeg"],
   [".jpg", "image/jpeg"],
   [".js", "text/javascript; charset=utf-8"],
@@ -23,8 +39,12 @@ const mimeTypes = new Map([
   [".map", "application/json; charset=utf-8"],
   [".png", "image/png"],
   [".svg", "image/svg+xml"],
+  [".tif", "image/tiff"],
+  [".tiff", "image/tiff"],
   [".wasm", "application/wasm"],
   [".webp", "image/webp"],
+  [".wav", "audio/wav"],
+  [".webm", "video/webm"],
   [".woff", "font/woff"],
   [".woff2", "font/woff2"],
 ]);
@@ -348,6 +368,146 @@ async function sendAsset(request, response, assetPath) {
   stream.pipe(response);
 }
 
+const localMediaPrefix = "/@fs";
+
+function resolveLocalMedia(pathname) {
+  if (
+    pathname !== localMediaPrefix &&
+    !pathname.startsWith(`${localMediaPrefix}/`)
+  ) {
+    return null;
+  }
+
+  const encodedPath = pathname.slice(localMediaPrefix.length);
+  if (encodedPath === "") {
+    return null;
+  }
+
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(encodedPath);
+  } catch {
+    return null;
+  }
+
+  if (decodedPath.includes("\0") || !isAbsolute(decodedPath)) {
+    return null;
+  }
+
+  const hasTraversal = decodedPath
+    .split("/")
+    .some(segment => segment === ".." || /^\.\.[. ]+$/.test(segment));
+  if (hasTraversal) {
+    return null;
+  }
+
+  const contentType = mimeTypes.get(extname(decodedPath).toLowerCase());
+  if (
+    contentType === undefined ||
+    (!contentType.startsWith("audio/") &&
+      !contentType.startsWith("image/") &&
+      !contentType.startsWith("video/"))
+  ) {
+    return null;
+  }
+
+  return { contentType, path: resolve(decodedPath) };
+}
+
+function parseByteRange(value, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value);
+  if (match === null) {
+    return null;
+  }
+
+  const [, startValue, endValue] = match;
+  if (startValue === "" && endValue === "") {
+    return null;
+  }
+
+  if (startValue === "") {
+    const suffixLength = Number(endValue);
+    if (suffixLength <= 0 || size === 0) {
+      return null;
+    }
+    return {
+      start: Math.max(size - suffixLength, 0),
+      end: size - 1,
+    };
+  }
+
+  const start = Number(startValue);
+  const end = endValue === "" ? size - 1 : Number(endValue);
+  if (start < 0 || end < start || start >= size) {
+    return null;
+  }
+
+  return { start, end: Math.min(end, size - 1) };
+}
+
+async function sendLocalMedia(request, response, media) {
+  let mediaStat;
+  try {
+    mediaStat = await stat(media.path);
+  } catch {
+    sendText(response, 404, "Not found");
+    return;
+  }
+
+  if (!mediaStat.isFile()) {
+    sendText(response, 404, "Not found");
+    return;
+  }
+
+  response.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+  response.setHeader("Content-Type", media.contentType);
+
+  const supportsRanges =
+    media.contentType.startsWith("audio/") ||
+    media.contentType.startsWith("video/");
+  if (supportsRanges) {
+    response.setHeader("Accept-Ranges", "bytes");
+  }
+
+  const rangeHeader = supportsRanges ? request.headers.range : undefined;
+  let streamOptions;
+  if (rangeHeader === undefined) {
+    response.setHeader("Content-Length", mediaStat.size);
+    response.writeHead(200);
+  } else {
+    const range = parseByteRange(rangeHeader, mediaStat.size);
+    if (range === null) {
+      response.setHeader("Content-Range", `bytes */${mediaStat.size}`);
+      response.writeHead(416);
+      response.end();
+      return;
+    }
+
+    response.setHeader("Content-Length", range.end - range.start + 1);
+    response.setHeader(
+      "Content-Range",
+      `bytes ${range.start}-${range.end}/${mediaStat.size}`,
+    );
+    response.writeHead(206);
+    streamOptions = range;
+  }
+
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
+
+  const stream = createReadStream(media.path, streamOptions);
+  stream.once("error", () => {
+    if (!response.headersSent) {
+      sendText(response, 500, "Could not read local media");
+    } else {
+      response.destroy();
+    }
+  });
+  stream.pipe(response);
+}
+
 export async function startWebServer({
   appRoot,
   host = "127.0.0.1",
@@ -484,6 +644,19 @@ export async function startWebServer({
         return;
       }
       response.end(bootstrapPayload);
+      return;
+    }
+
+    if (
+      url.pathname === localMediaPrefix ||
+      url.pathname.startsWith(`${localMediaPrefix}/`)
+    ) {
+      const localMedia = resolveLocalMedia(url.pathname);
+      if (localMedia === null) {
+        sendText(response, 404, "Not found");
+        return;
+      }
+      await sendLocalMedia(request, response, localMedia);
       return;
     }
 

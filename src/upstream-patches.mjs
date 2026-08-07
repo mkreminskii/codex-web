@@ -792,6 +792,29 @@ function keyboardShortcutMainSource(
   })()`;
 }
 
+const browserFileUrlMarker = "__codex_browser_file_urls";
+
+function patchBrowserFileUrls(source, bundleLabel) {
+  if (source.includes(browserFileUrlMarker)) {
+    return source;
+  }
+
+  const localFileUrlPattern =
+    /([A-Za-z_$][\w$]*)=`app:\/\/fs`,([A-Za-z_$][\w$]*)=`\/@fs`/g;
+  const matches = [...source.matchAll(localFileUrlPattern)];
+  if (matches.length !== 1) {
+    throw new Error(
+      `Expected one upstream ${bundleLabel} local-file URL builder, found ${matches.length}`,
+    );
+  }
+
+  const [match, originAlias, pathPrefixAlias] = matches[0];
+  return source.replace(
+    match,
+    `${originAlias}=\`\`/* ${browserFileUrlMarker} */,${pathPrefixAlias}=\`/@fs\``,
+  );
+}
+
 function patchMainProcess(source) {
   if (source.includes("CODEX_WEB_HEADLESS")) {
     return source;
@@ -1351,29 +1374,39 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
 
   const appServerTransport = await findAppServerTransportBundle(buildRoot, buildEntries);
   const mainPath = join(buildRoot, mainCandidates[0]);
+  const workerPath = join(buildRoot, "worker.js");
   const indexPath = join(webviewRoot, "index.html");
   const rendererPath = join(assetsRoot, rendererCandidates[0]);
   const sidePanelPath = join(assetsRoot, sidePanelCandidates[0].name);
   const bridgePath = join(webviewRoot, "__codex_browser_bridge.js");
   const iconPath = join(assetsRoot, iconCandidates[0]);
 
-  const [preload, mainProcess, index, renderer, sidePanel, appIcon] = await Promise.all([
-    appServerTransport.path === preloadPath
-      ? appServerTransport.source
-      : readFile(preloadPath, "utf8"),
-    appServerTransport.path === mainPath
-      ? appServerTransport.source
-      : readFile(mainPath, "utf8"),
-    readFile(indexPath, "utf8"),
-    readFile(rendererPath, "utf8"),
-    sidePanelCandidates[0].source,
-    readFile(iconPath),
-  ]);
+  const [preload, mainProcess, worker, index, renderer, sidePanel, appIcon] =
+    await Promise.all([
+      appServerTransport.path === preloadPath
+        ? appServerTransport.source
+        : readFile(preloadPath, "utf8"),
+      appServerTransport.path === mainPath
+        ? appServerTransport.source
+        : readFile(mainPath, "utf8"),
+      readFile(workerPath, "utf8"),
+      readFile(indexPath, "utf8"),
+      readFile(rendererPath, "utf8"),
+      sidePanelCandidates[0].source,
+      readFile(iconPath),
+    ]);
   let patchedPreload = patchPreload(preload);
-  let patchedMainProcess = patchMainProcess(mainProcess);
+  let patchedMainProcess = patchBrowserFileUrls(
+    patchMainProcess(mainProcess),
+    "main-process",
+  );
+  const patchedWorker = patchBrowserFileUrls(worker, "worker");
   const patchedIndex = patchWebviewIndex(index);
-  const patchedRenderer = patchRendererRemoteTelemetry(
-    patchDefaultSidebarRows(patchProfilePetAction(patchWebviewRenderer(renderer))),
+  const patchedRenderer = patchBrowserFileUrls(
+    patchRendererRemoteTelemetry(
+      patchDefaultSidebarRows(patchProfilePetAction(patchWebviewRenderer(renderer))),
+    ),
+    "renderer",
   );
   const patchedSidePanel = patchBrowserSidePanelAction(sidePanel);
   const webManifest = `${JSON.stringify(
@@ -1427,6 +1460,7 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
   await Promise.all([
     writeFile(preloadPath, patchedPreload),
     writeFile(mainPath, patchedMainProcess),
+    writeFile(workerPath, patchedWorker),
     writeFile(indexPath, patchedIndex),
     writeFile(rendererPath, patchedRenderer),
     writeFile(sidePanelPath, patchedSidePanel),
@@ -1441,6 +1475,7 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
 
   return {
     mainBundle: mainCandidates[0],
+    workerBundle: "worker.js",
     appServerTransportBundle: appServerTransport.name,
     rendererBundle: rendererCandidates[0],
     browserBridge: "__codex_browser_bridge.js",

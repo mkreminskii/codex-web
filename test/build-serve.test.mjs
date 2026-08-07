@@ -79,6 +79,7 @@ async function createSyntheticDmg(root) {
       "let activity={projectGroup:e(p$,t)};function cAc(e){let t=(0,D8.c)(18),{chatGptConversationId:n,chatGptProjectId:r,itemKind:i,localConversationId:a,projectGroup:o,sidebarMode:s}=e,c=Po(fg,`2031251742`);return(0,O8.jsx)(mAc,{itemKind:i,sidebarMode:s})}function mAc(e){return(0,O8.jsx)(Z,{id:`sidebarElectron.priorityThreads.details.codex`,defaultMessage:`Codex`,description:`Source label for a standalone Codex task in the Priority filter`})}\n",
       "function LGc(e){let E=Fo(Q),m=`codex`;let he=(e,t)=>{let n=a.get(e);if(n?.source===`codex`)return(0,V5.jsx)(DRc,{canPin:!0,floatStatusIconsEnd:!0,hideTimestamp:!0,isGrouped:!1,locationId:C??`unified-sidebar`,onArchiveError:()=>t.onArchiveError(e),onArchiveStart:()=>t.onArchiveStart(e),onArchiveSuccess:()=>t.onArchiveSuccess(e),shortcutLabel:j?.get(n.threadKey),showPinActionOnHover:!0,threadKey:n.threadKey})};return he}\n",
       "let O9c=`https://ab.chatgpt.com/v1`,l5c=`https://chatgpt.com/ces/v1/rgstr`,k9c=`https://ab.chatgpt.com/v1/sdk_exception`,a9c=()=>{},N9c={networkConfig:{api:O9c,logEventUrl:l5c,sdkExceptionUrl:k9c,networkOverrideFunc:a9c}},P9c={...N9c,disableStorage:!0,loggingEnabled:`disabled`};\n",
+      "var rendererFileOrigin=`app://fs`,rendererFilePrefix=`/@fs`;\n",
       "let analyticsProvider={submitCodexAnalyticsEvent:r===`chatgpt`?w5c:null};\n",
     ].join(""),
   );
@@ -100,7 +101,11 @@ async function createSyntheticDmg(root) {
   );
   await writeFile(
     join(buildRoot, "main-fixture.js"),
-    "let M,s,d,f,q=360,j=320,U={items:[]},l={BrowserWindow:class{},Menu:{setApplicationMenu(){}}},p0=async()=>null,O=async()=>{let e=l.BrowserWindow.getFocusedWindow();return e&&!e.isDestroyed()?e:p0()},v={sendMessageToWindow(){}},z=async e=>{let t=await O();t&&v.sendMessageToWindow(t,{type:`command-menu`,query:e})},C=[{id:`copy`,electron:{isOverridableByBrowserWebpage:!0}}],A=new Set(C.filter(e=>`electron`in e&&e.electron!=null&&`isOverridableByBrowserWebpage`in e.electron&&e.electron.isOverridableByBrowserWebpage===!0).map(({id:e})=>e)),Q=new Set;for(let e of C)if(!A.has(e.id))Q.add(e.id);new l.BrowserWindow({backgroundColor:M,show:s,parent:d,...f===void 0?{}:{focusable:f},webPreferences:{}});async function A0({buildFlavor:e,parent:t}){if(false)return;let i=`Codex`,u=`Build`,y=`Version`,p={htmlIconDataUrl:null},x=false,h=`OK`,m=`About Codex`,S=new l.BrowserWindow({width:q,height:j,useContentSize:!0,title:m,show:!1,resizable:!1,minimizable:!1,maximizable:!1,fullscreenable:!1,autoHideMenuBar:!0,webPreferences:{}});await S.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(H({appDisplayName:i,buildInfoLabel:u,buildInfoText:y,iconDataUrl:p.htmlIconDataUrl,isDark:x,okLabel:h,title:m}))}`)}l.Menu.setApplicationMenu(U);function H(){return`<button id=\"ok\">OK</button>`}function W(){return[`app-server`,`--analytics-default-enabled`,`wsl`]}\n",
+    "let M,s,d,f,q=360,j=320,U={items:[]},l={BrowserWindow:class{},Menu:{setApplicationMenu(){}}},p0=async()=>null,O=async()=>{let e=l.BrowserWindow.getFocusedWindow();return e&&!e.isDestroyed()?e:p0()},v={sendMessageToWindow(){}},z=async e=>{let t=await O();t&&v.sendMessageToWindow(t,{type:`command-menu`,query:e})},C=[{id:`copy`,electron:{isOverridableByBrowserWebpage:!0}}],A=new Set(C.filter(e=>`electron`in e&&e.electron!=null&&`isOverridableByBrowserWebpage`in e.electron&&e.electron.isOverridableByBrowserWebpage===!0).map(({id:e})=>e.id)),Q=new Set;for(let e of C)if(!A.has(e.id))Q.add(e.id);new l.BrowserWindow({backgroundColor:M,show:s,parent:d,...f===void 0?{}:{focusable:f},webPreferences:{}});async function A0({buildFlavor:e,parent:t}){if(false)return;let i=`Codex`,u=`Build`,y=`Version`,p={htmlIconDataUrl:null},x=false,h=`OK`,m=`About Codex`,S=new l.BrowserWindow({width:q,height:j,useContentSize:!0,title:m,show:!1,resizable:!1,minimizable:!1,maximizable:!1,fullscreenable:!1,autoHideMenuBar:!0,webPreferences:{}});await S.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(H({appDisplayName:i,buildInfoLabel:u,buildInfoText:y,iconDataUrl:p.htmlIconDataUrl,isDark:x,okLabel:h,title:m}))}`)}l.Menu.setApplicationMenu(U);function H(){return`<button id=\"ok\">OK</button>`}function W(){return[`app-server`,`--analytics-default-enabled`,`wsl`]}var mainFileOrigin=`app://fs`,mainFilePrefix=`/@fs`;\n",
+  );
+  await writeFile(
+    join(buildRoot, "worker.js"),
+    "var workerFileOrigin=`app://fs`,workerFilePrefix=`/@fs`;\n",
   );
   await createPackage(appSource, join(resourcesRoot, "app.asar"));
 
@@ -206,6 +211,14 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.match(mainSource, /isOverridableByBrowserWebpage/);
   assert.match(mainSource, /CODEX_WEB_HEADLESS[\s\S]*BrowserWindow\.getAllWindows\(\)\.find/);
   assert.match(preloadSource, /dispatchKeyboardShortcut/);
+  assert.match(mainSource, /__codex_browser_file_urls/);
+  assert.doesNotMatch(mainSource, /app:\/\/fs/);
+  const workerSource = await readFile(
+    join(result.outputRoot, "upstream", ".vite", "build", "worker.js"),
+    "utf8",
+  );
+  assert.match(workerSource, /__codex_browser_file_urls/);
+  assert.doesNotMatch(workerSource, /app:\/\/fs/);
   assert.match(preloadSource, /getKeyboardShortcuts/);
   assert.match(mainSource, /`-c`,`analytics\.enabled=false`/);
   assert.doesNotMatch(mainSource, /--analytics-default-enabled/);
@@ -237,6 +250,8 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.match(rendererSource, /loggingEnabled:`disabled`/);
   assert.match(rendererSource, /submitCodexAnalyticsEvent:null/);
   assert.doesNotMatch(rendererSource, /submitCodexAnalyticsEvent:r===/);
+  assert.match(rendererSource, /__codex_browser_file_urls/);
+  assert.doesNotMatch(rendererSource, /app:\/\/fs/);
   assert.match(rendererSource, /__codex_default_sidebar_rows/);
   assert.match(rendererSource, /hideRemoteHostEnvIcon:!0/);
   assert.match(
@@ -299,6 +314,61 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.equal(protectedAsset.status, 403);
 
   const authenticatedHeaders = { Cookie: cookie.split(";")[0] };
+
+  const localImagePath = join(root, "local media #?.png");
+  const localImageBytes = Buffer.from("local image fixture");
+  await writeFile(localImagePath, localImageBytes);
+  const localImageUrl = new URL(
+    `/@fs${encodeURI(localImagePath).replaceAll("#", "%23").replaceAll("?", "%3F")}`,
+    server.url,
+  );
+  const unauthenticatedLocalImage = await fetch(localImageUrl);
+  assert.equal(unauthenticatedLocalImage.status, 403);
+
+  const localImage = await fetch(localImageUrl, {
+    headers: authenticatedHeaders,
+  });
+  assert.equal(localImage.status, 200);
+  assert.equal(localImage.headers.get("content-type"), "image/png");
+  assert.equal(
+    localImage.headers.get("content-security-policy"),
+    "default-src 'none'; sandbox",
+  );
+  assert.deepEqual(Buffer.from(await localImage.arrayBuffer()), localImageBytes);
+
+  const localTextPath = join(root, "local.txt");
+  await writeFile(localTextPath, "not media\n");
+  const localText = await fetch(
+    new URL(`/@fs${encodeURI(localTextPath)}`, server.url),
+    { headers: authenticatedHeaders },
+  );
+  assert.equal(localText.status, 404);
+
+  const localVideoPath = join(root, "local.mp4");
+  await writeFile(localVideoPath, "0123456789");
+  const localVideoUrl = new URL(`/@fs${encodeURI(localVideoPath)}`, server.url);
+  const localVideoRange = await fetch(localVideoUrl, {
+    headers: { ...authenticatedHeaders, Range: "bytes=2-5" },
+  });
+  assert.equal(localVideoRange.status, 206);
+  assert.equal(localVideoRange.headers.get("accept-ranges"), "bytes");
+  assert.equal(localVideoRange.headers.get("content-range"), "bytes 2-5/10");
+  assert.equal(await localVideoRange.text(), "2345");
+
+  const invalidLocalVideoRange = await fetch(localVideoUrl, {
+    headers: { ...authenticatedHeaders, Range: "bytes=20-30" },
+  });
+  assert.equal(invalidLocalVideoRange.status, 416);
+  assert.equal(
+    invalidLocalVideoRange.headers.get("content-range"),
+    "bytes */10",
+  );
+
+  const malformedLocalMedia = await fetch(
+    new URL("/@fs/%E0%A4%A", server.url),
+    { headers: authenticatedHeaders },
+  );
+  assert.equal(malformedLocalMedia.status, 404);
   const unavailableBootstrap = await fetch(
     new URL("/__codex_bootstrap", server.url),
     { headers: authenticatedHeaders },
