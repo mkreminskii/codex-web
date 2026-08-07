@@ -67,7 +67,11 @@ async function createSyntheticDmg(root) {
   await writeFile(join(webviewRoot, "app.js"), "globalThis.codexFixture = true;\n");
   await writeFile(
     join(assetsRoot, "app-initial-fixture.js"),
-    "function Lrc(e){let{sources:n,setSources:r}=e;lp(`workspace-root-option-picked`,()=>{});let k=(0,PQ.jsx)(Z,{id:`projectSetup.createLocalProject.sourceFoldersLabel`});return(0,PQ.jsxs)(jP,{className:`gap-2`,children:[k,`fixture`]})}function Rrc(){dp.dispatchMessage(`electron-pick-workspace-root-option`,{allowMultiple:!0})}function Lcc(e){return yp(`remote-workspace-directory-entries`,e)}var Hcc,Ucc,Wcc,qQ,Gcc,Kcc=n((()=>{}));\n",
+    "function Lrc(e){let{sources:n,setSources:r}=e;lp(`workspace-root-option-picked`,()=>{});let k=(0,PQ.jsx)(Z,{id:`projectSetup.createLocalProject.sourceFoldersLabel`});return(0,PQ.jsxs)(jP,{className:`gap-2`,children:[k,`fixture`]})}function Rrc(){dp.dispatchMessage(`electron-pick-workspace-root-option`,{allowMultiple:!0})}function Lcc(e){return yp(`remote-workspace-directory-entries`,e)}var Hcc,Ucc,Wcc,qQ,Gcc,Kcc=n((()=>{}));function P(e){let t=(0,C.c)(32),{isPetVisible:s,onTogglePet:p}=e;let x;t[11]!==s||t[12]!==p?(x=p==null?null:(0,J.jsx)(AR,{children:s?(0,J.jsx)(Z,{id:`codex.profileFooter.hidePet`,defaultMessage:`Hide pet`}):(0,J.jsx)(Z,{id:`codex.profileFooter.showPet`,defaultMessage:`Show pet`})}),t[11]=s,t[12]=p,t[13]=x):x=t[13];let S;t[14]===x?S=t[15]:(S=(0,J.jsx)(J.Fragment,{children:x}),t[14]=x,t[15]=S);let w=(0,J.jsx)(Z,{id:`settings`});return(0,J.jsxs)(`div`,{children:[h,S,w]})}\n",
+  );
+  await writeFile(
+    join(assetsRoot, "thread-app-shell-chrome-fixture.js"),
+    "let z=[...I?[{deferSelectionUntilDropdownClose:!0,id:`browser`,Icon:te,keyboardShortcut:A,onSelect:pe,title:(0,J.jsx)(V,{id:`thread.sidePanel.openBrowserTab`,defaultMessage:`Browser`,description:`Action label for opening the browser tab from the task side panel`})}]:[],...N?[{id:`review`}]:[],...t===`right`?d.map(e=>e):[]];\n",
   );
   await writeFile(
     join(buildRoot, "preload.js"),
@@ -172,6 +176,21 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.match(rendererSource, /initialDirectoryPath:null/);
   assert.match(rendererSource, /remote-workspace-directory-entries/);
   assert.doesNotMatch(rendererSource, /electron-pick-workspace-root-option/);
+  assert.match(rendererSource, /__codex_hide_profile_pet_action/);
+  assert.doesNotMatch(rendererSource, /children:\[h,S,w\]/);
+  const sidePanelSource = await readFile(
+    join(
+      result.outputRoot,
+      "upstream",
+      "webview",
+      "assets",
+      "thread-app-shell-chrome-fixture.js",
+    ),
+    "utf8",
+  );
+  assert.match(sidePanelSource, /__codex_hide_browser_side_panel_action/);
+  assert.match(sidePanelSource, /\.\.\.I&&t!==`right`\?/);
+  assert.match(sidePanelSource, /id:`review`/);
   assert.equal(
     await realpath(join(root, "dist", "current")),
     await realpath(result.outputRoot),

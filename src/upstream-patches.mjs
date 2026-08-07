@@ -633,6 +633,99 @@ function patchWebviewRenderer(source) {
   );
 }
 
+function patchProfilePetAction(source) {
+  const marker = "__codex_hide_profile_pet_action";
+  if (source.includes(marker)) {
+    return source;
+  }
+
+  const label = "id:`codex.profileFooter.showPet`";
+  const labelMatches = source.split(label).length - 1;
+  if (labelMatches !== 1) {
+    throw new Error(
+      `Expected one upstream profile pet action, found ${labelMatches}`,
+    );
+  }
+
+  const labelIndex = source.indexOf(label);
+  const componentTail = source.slice(labelIndex, labelIndex + 5_000);
+  const wrapperMatch =
+    /;let ([A-Za-z_$][\w$]*);t\[\d+\]===([A-Za-z_$][\w$]*)\?/.exec(
+      componentTail,
+    );
+  if (wrapperMatch === null) {
+    throw new Error("Upstream profile pet action wrapper was not found");
+  }
+
+  const wrapperName = wrapperMatch[1];
+  const childListMatches = [
+    ...componentTail.matchAll(
+      /children:\[([A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*)*)\]/g,
+    ),
+  ].filter(match => match[1].split(",").includes(wrapperName));
+  if (childListMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream profile menu child list, found ${childListMatches.length}`,
+    );
+  }
+
+  const childListMatch = childListMatches[0];
+  const childList = childListMatch[1]
+    .split(",")
+    .filter(child => child !== wrapperName)
+    .join(",");
+  const matchStart = labelIndex + childListMatch.index;
+  const matchEnd = matchStart + childListMatch[0].length;
+  return (
+    source.slice(0, matchStart) +
+    `children:[${childList}]/* ${marker} */` +
+    source.slice(matchEnd)
+  );
+}
+
+function patchBrowserSidePanelAction(source) {
+  const marker = "__codex_hide_browser_side_panel_action";
+  if (source.includes(marker)) {
+    return source;
+  }
+
+  const label = "id:`thread.sidePanel.openBrowserTab`";
+  const labelMatches = source.split(label).length - 1;
+  if (labelMatches !== 1) {
+    throw new Error(
+      `Expected one upstream browser side-panel action, found ${labelMatches}`,
+    );
+  }
+
+  const labelIndex = source.indexOf(label);
+  const actionStart = source.lastIndexOf("...", labelIndex);
+  const actionEnd = source.indexOf("})}]:[],", labelIndex);
+  const actionPrefix = source.slice(actionStart, labelIndex);
+  const actionPrefixMatch = /^\.\.\.([A-Za-z_$][\w$]*)\?\[\{/.exec(actionPrefix);
+  const targetMatch =
+    /\.\.\.([A-Za-z_$][\w$]*)===`right`\?/.exec(
+      source.slice(labelIndex, labelIndex + 3_000),
+    );
+  if (
+    actionStart === -1 ||
+    actionEnd === -1 ||
+    actionPrefixMatch === null ||
+    targetMatch === null ||
+    !actionPrefix.includes("id:`browser`")
+  ) {
+    throw new Error("Upstream browser side-panel action block was not found");
+  }
+
+  const enabledName = actionPrefixMatch[1];
+  const targetName = targetMatch[1];
+  const prefixEnd = actionStart + actionPrefixMatch[0].length;
+  return (
+    source.slice(0, actionStart) +
+    `...${enabledName}&&${targetName}!==\`right\`?/* ${marker} */[{` +
+    source.slice(prefixEnd)
+  );
+}
+
 function patchWebviewIndex(source) {
   if (source.includes("__codex_browser_bridge.js")) {
     return source;
@@ -671,13 +764,23 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     );
   }
 
+  const sidePanelCandidates = assetEntries.filter(
+    name => name.startsWith("thread-app-shell-chrome-") && name.endsWith(".js"),
+  );
+  if (sidePanelCandidates.length !== 1) {
+    throw new Error(
+      `Expected one upstream side-panel bundle, found ${sidePanelCandidates.length}`,
+    );
+  }
+
   const appServerTransport = await findAppServerTransportBundle(buildRoot, buildEntries);
   const mainPath = join(buildRoot, mainCandidates[0]);
   const indexPath = join(webviewRoot, "index.html");
   const rendererPath = join(assetsRoot, rendererCandidates[0]);
+  const sidePanelPath = join(assetsRoot, sidePanelCandidates[0]);
   const bridgePath = join(webviewRoot, "__codex_browser_bridge.js");
 
-  const [preload, mainProcess, index, renderer] = await Promise.all([
+  const [preload, mainProcess, index, renderer, sidePanel] = await Promise.all([
     appServerTransport.path === preloadPath
       ? appServerTransport.source
       : readFile(preloadPath, "utf8"),
@@ -686,11 +789,13 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
       : readFile(mainPath, "utf8"),
     readFile(indexPath, "utf8"),
     readFile(rendererPath, "utf8"),
+    readFile(sidePanelPath, "utf8"),
   ]);
   let patchedPreload = patchPreload(preload);
   let patchedMainProcess = patchMainProcess(mainProcess);
   const patchedIndex = patchWebviewIndex(index);
-  const patchedRenderer = patchWebviewRenderer(renderer);
+  const patchedRenderer = patchProfilePetAction(patchWebviewRenderer(renderer));
+  const patchedSidePanel = patchBrowserSidePanelAction(sidePanel);
   let patchedAppServerTransport = null;
   if (appServerTransport.path === preloadPath) {
     patchedPreload = patchAppServerTransport(patchedPreload);
@@ -705,6 +810,7 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     writeFile(mainPath, patchedMainProcess),
     writeFile(indexPath, patchedIndex),
     writeFile(rendererPath, patchedRenderer),
+    writeFile(sidePanelPath, patchedSidePanel),
     writeFile(bridgePath, browserBridgeSource),
     ...(patchedAppServerTransport === null
       ? []
