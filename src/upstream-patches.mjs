@@ -836,6 +836,101 @@ function patchProfilePetAction(source) {
   );
 }
 
+const defaultSidebarRowsMarker = "__codex_default_sidebar_rows";
+
+function patchDefaultSidebarRows(source) {
+  if (source.includes(defaultSidebarRowsMarker)) {
+    return source;
+  }
+
+  const projectGroupSelectorMatches = [
+    ...source.matchAll(
+      /projectGroup:[A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*\)/g,
+    ),
+  ];
+  if (projectGroupSelectorMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream thread project-group selector, found ${projectGroupSelectorMatches.length}`,
+    );
+  }
+  const projectGroupSelector = projectGroupSelectorMatches[0][1];
+
+  const detailsComponentPattern =
+    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{let [A-Za-z_$][\w$]*=\(0,[A-Za-z_$][\w$]*\.c\)\(\d+\),\{chatGptConversationId:[A-Za-z_$][\w$]*,chatGptProjectId:[A-Za-z_$][\w$]*,itemKind:[A-Za-z_$][\w$]*,localConversationId:[A-Za-z_$][\w$]*,projectGroup:[A-Za-z_$][\w$]*,sidebarMode:[A-Za-z_$][\w$]*\}=\2,[A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(/g;
+  const detailsComponentMatches = [...source.matchAll(detailsComponentPattern)];
+  if (detailsComponentMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream thread details component, found ${detailsComponentMatches.length}`,
+    );
+  }
+  const detailsComponent = detailsComponentMatches[0][1];
+  const stateHook = detailsComponentMatches[0][3];
+  const detailsComponentTail = source.slice(
+    detailsComponentMatches[0].index,
+    detailsComponentMatches[0].index + 4_000,
+  );
+  const detailsJsxAlias = /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(/.exec(
+    detailsComponentTail,
+  )?.[1];
+  if (detailsJsxAlias === undefined) {
+    throw new Error("Upstream thread details JSX runtime was not found");
+  }
+
+  const defaultRowPattern =
+    /if\(([A-Za-z_$][\w$]*)\?\.source===`codex`\)return\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{canPin:!0,floatStatusIconsEnd:!0,hideTimestamp:!0,isGrouped:!1,[\s\S]*?showPinActionOnHover:!0,threadKey:\1\.threadKey\}\)/g;
+  const defaultRowMatches = [...source.matchAll(defaultRowPattern)];
+  if (defaultRowMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream default Codex sidebar row, found ${defaultRowMatches.length}`,
+    );
+  }
+  const defaultRowMatch = defaultRowMatches[0];
+  const itemAlias = defaultRowMatch[1];
+  const rowJsxAlias = defaultRowMatch[2];
+  const rowSource = defaultRowMatch[0];
+  const rowOwnerStart = source.lastIndexOf("function ", defaultRowMatch.index);
+  if (rowOwnerStart === -1) {
+    throw new Error("Upstream default sidebar row owner was not found");
+  }
+
+  const noWorkspaceLabel =
+    "id:`sidebarElectron.priorityThreads.details.codex`,defaultMessage:`Codex`,description:`Source label for a standalone Codex task in the Priority filter`";
+  const noWorkspaceLabelMatches = source.split(noWorkspaceLabel).length - 1;
+  if (noWorkspaceLabelMatches !== 1) {
+    throw new Error(
+      `Expected one upstream standalone Codex detail label, found ${noWorkspaceLabelMatches}`,
+    );
+  }
+
+  const workspaceDetailsComponent = "__codexDefaultWorkspaceDetails";
+  const workspaceDetailsSource =
+    `function ${workspaceDetailsComponent}(e){` +
+    `let t=${stateHook}(${projectGroupSelector},e.threadKey);` +
+    `return(0,${detailsJsxAlias}.jsx)(${detailsComponent},{itemKind:\`local\`,` +
+    `projectGroup:t,sidebarMode:\`codex\`})}` +
+    `/* ${defaultSidebarRowsMarker} */`;
+  const patchedRow = rowSource
+    .replace(
+      "floatStatusIconsEnd:!0,hideTimestamp:!0",
+      "floatStatusIconsEnd:!0,hideRemoteHostEnvIcon:!0,hideTimestamp:!0",
+    )
+    .replace(
+      `showPinActionOnHover:!0,threadKey:${itemAlias}.threadKey`,
+      `secondaryContent:(0,${rowJsxAlias}.jsx)(${workspaceDetailsComponent},{threadKey:${itemAlias}.threadKey}),` +
+        `showPinActionOnHover:!0,threadKey:${itemAlias}.threadKey,wrapSecondaryContent:!0`,
+    );
+
+  let patched =
+    source.slice(0, rowOwnerStart) +
+    workspaceDetailsSource +
+    source.slice(rowOwnerStart);
+  patched = patched.replace(rowSource, patchedRow);
+  return patched.replace(
+    noWorkspaceLabel,
+    "id:`sidebarElectron.thread.noWorkspace`,defaultMessage:`No workspace`,description:`Fallback shown beneath a sidebar task that has no workspace`",
+  );
+}
+
 function patchBrowserSidePanelAction(source) {
   const marker = "__codex_hide_browser_side_panel_action";
   if (source.includes(marker)) {
@@ -1006,7 +1101,7 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
   let patchedMainProcess = patchMainProcess(mainProcess);
   const patchedIndex = patchWebviewIndex(index);
   const patchedRenderer = patchRendererRemoteTelemetry(
-    patchProfilePetAction(patchWebviewRenderer(renderer)),
+    patchDefaultSidebarRows(patchProfilePetAction(patchWebviewRenderer(renderer))),
   );
   const patchedSidePanel = patchBrowserSidePanelAction(sidePanel);
   const webManifest = `${JSON.stringify(

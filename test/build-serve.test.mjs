@@ -76,6 +76,8 @@ async function createSyntheticDmg(root) {
     join(assetsRoot, "app-initial-fixture.js"),
     [
       "function Lrc(e){let{sources:n,setSources:r}=e;lp(`workspace-root-option-picked`,()=>{});let k=(0,PQ.jsx)(Z,{id:`projectSetup.createLocalProject.sourceFoldersLabel`});return(0,PQ.jsxs)(jP,{className:`gap-2`,children:[k,`fixture`]})}function Rrc(){dp.dispatchMessage(`electron-pick-workspace-root-option`,{allowMultiple:!0})}function Lcc(e){return yp(`remote-workspace-directory-entries`,e)}var Hcc,Ucc,Wcc,qQ,Gcc,Kcc=n((()=>{}));function P(e){let t=(0,C.c)(32),{isPetVisible:s,onTogglePet:p}=e;let x;t[11]!==s||t[12]!==p?(x=p==null?null:(0,J.jsx)(AR,{children:s?(0,J.jsx)(Z,{id:`codex.profileFooter.hidePet`,defaultMessage:`Hide pet`}):(0,J.jsx)(Z,{id:`codex.profileFooter.showPet`,defaultMessage:`Show pet`})}),t[11]=s,t[12]=p,t[13]=x):x=t[13];let S;t[14]===x?S=t[15]:(S=(0,J.jsx)(J.Fragment,{children:x}),t[14]=x,t[15]=S);let w=(0,J.jsx)(Z,{id:`settings`});return(0,J.jsxs)(`div`,{children:[h,S,w]})}\n",
+      "let activity={projectGroup:e(p$,t)};function cAc(e){let t=(0,D8.c)(18),{chatGptConversationId:n,chatGptProjectId:r,itemKind:i,localConversationId:a,projectGroup:o,sidebarMode:s}=e,c=Po(fg,`2031251742`);return(0,O8.jsx)(mAc,{itemKind:i,sidebarMode:s})}function mAc(e){return(0,O8.jsx)(Z,{id:`sidebarElectron.priorityThreads.details.codex`,defaultMessage:`Codex`,description:`Source label for a standalone Codex task in the Priority filter`})}\n",
+      "function LGc(e){let E=Fo(Q),m=`codex`;let he=(e,t)=>{let n=a.get(e);if(n?.source===`codex`)return(0,V5.jsx)(DRc,{canPin:!0,floatStatusIconsEnd:!0,hideTimestamp:!0,isGrouped:!1,locationId:C??`unified-sidebar`,onArchiveError:()=>t.onArchiveError(e),onArchiveStart:()=>t.onArchiveStart(e),onArchiveSuccess:()=>t.onArchiveSuccess(e),shortcutLabel:j?.get(n.threadKey),showPinActionOnHover:!0,threadKey:n.threadKey})};return he}\n",
       "let O9c=`https://ab.chatgpt.com/v1`,l5c=`https://chatgpt.com/ces/v1/rgstr`,k9c=`https://ab.chatgpt.com/v1/sdk_exception`,a9c=()=>{},N9c={networkConfig:{api:O9c,logEventUrl:l5c,sdkExceptionUrl:k9c,networkOverrideFunc:a9c}},P9c={...N9c,disableStorage:!0,loggingEnabled:`disabled`};\n",
       "let analyticsProvider={submitCodexAnalyticsEvent:r===`chatgpt`?w5c:null};\n",
     ].join(""),
@@ -224,6 +226,18 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.match(rendererSource, /loggingEnabled:`disabled`/);
   assert.match(rendererSource, /submitCodexAnalyticsEvent:null/);
   assert.doesNotMatch(rendererSource, /submitCodexAnalyticsEvent:r===/);
+  assert.match(rendererSource, /__codex_default_sidebar_rows/);
+  assert.match(rendererSource, /hideRemoteHostEnvIcon:!0/);
+  assert.match(
+    rendererSource,
+    /secondaryContent:\(0,V5\.jsx\)\(__codexDefaultWorkspaceDetails,\{threadKey:n\.threadKey\}\)/,
+  );
+  assert.match(rendererSource, /threadKey:n\.threadKey,wrapSecondaryContent:!0/);
+  assert.match(rendererSource, /defaultMessage:`No workspace`/);
+  assert.doesNotMatch(
+    rendererSource,
+    /id:`sidebarElectron\.priorityThreads\.details\.codex`/,
+  );
   const sidePanelSource = await readFile(
     join(
       result.outputRoot,
