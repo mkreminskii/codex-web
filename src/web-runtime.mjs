@@ -62,8 +62,31 @@ export async function startWebRuntime({
   }
 
   let closed = false;
+  const failure = applicationHost.exited.then(
+    result => {
+      if (closed) {
+        return null;
+      }
+      const status =
+        result.code === null ? `signal ${result.signal}` : `code ${result.code}`;
+      const detail = result.output === "" ? "" : `: ${result.output}`;
+      return new Error(
+        `The upstream application host exited unexpectedly with ${status}${detail}`,
+      );
+    },
+    error => {
+      if (closed) {
+        return null;
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      return new Error(`The upstream application host failed unexpectedly: ${detail}`, {
+        cause: error,
+      });
+    },
+  );
   return {
     url: server.url,
+    failure,
     async close() {
       if (closed) {
         return;

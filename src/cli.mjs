@@ -160,8 +160,17 @@ export async function run(
       const appRoot = await resolveAppRoot();
       const runtime = await startRuntime({ appRoot, host, port, publicUrl });
       stdout.write(`Open ${runtime.url}\n`);
-      await waitForShutdownImpl();
-      await runtime.close();
+      try {
+        const failure = await Promise.race([
+          waitForShutdownImpl().then(() => null),
+          runtime.failure,
+        ]);
+        if (failure !== null) {
+          throw failure;
+        }
+      } finally {
+        await runtime.close();
+      }
       return 0;
     }
 

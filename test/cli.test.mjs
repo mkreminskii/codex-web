@@ -93,6 +93,7 @@ test("serve forwards explicit host and port options", async () => {
         calls.push(options);
         return {
           url: "https://codex.example.com/?cap=fixture",
+          failure: new Promise(() => {}),
           async close() {
             closed = true;
           },
@@ -114,6 +115,30 @@ test("serve forwards explicit host and port options", async () => {
   assert.equal(closed, true);
   assert.ok(stdout.read().includes("Open https://codex.example.com"));
   assert.match(stderr.read(), /non-loopback HTTP/);
+});
+
+test("serve exits when the Electron host fails after startup", async () => {
+  const stdout = capture();
+  const stderr = capture();
+  let closed = false;
+
+  const exitCode = await run(["serve"], {
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    resolveAppRoot: async () => "/tmp/generated-app",
+    startRuntime: async () => ({
+      url: "https://codex.example.test/?cap=fixture",
+      failure: Promise.resolve(new Error("Electron host exited")),
+      async close() {
+        closed = true;
+      },
+    }),
+    waitForShutdownImpl: () => new Promise(() => {}),
+  });
+
+  assert.equal(exitCode, 1);
+  assert.equal(closed, true);
+  assert.equal(stderr.read(), "codex-web: Electron host exited\n");
 });
 
 test("serve rejects an invalid port before startup", async () => {
