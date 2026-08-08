@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import {
   cp,
   mkdtemp,
@@ -30,6 +31,20 @@ async function readModuleVersion(upstreamRoot, moduleName) {
     throw new Error(`Upstream ${moduleName} has no exact package version`);
   }
   return packageJson.version;
+}
+
+async function readDeclaredModuleVersion(upstreamRoot, moduleName) {
+  const packageJson = JSON.parse(
+    await readFile(join(upstreamRoot, "package.json"), "utf8"),
+  );
+  const version = packageJson.dependencies?.[moduleName];
+  if (
+    typeof version !== "string" ||
+    !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)
+  ) {
+    throw new Error(`Upstream ${moduleName} has no exact package version`);
+  }
+  return version;
 }
 
 async function replaceOnce(path, needle, replacement) {
@@ -98,6 +113,7 @@ export async function rebuildNativeModules({
   arch,
   platform,
   rebuildImpl,
+  runCommand = runBufferedCommand,
   progress,
 }) {
   const versions = await runPhase(
@@ -106,6 +122,10 @@ export async function rebuildNativeModules({
     async () => ({
       "better-sqlite3": await readModuleVersion(buildPath, "better-sqlite3"),
       "node-pty": await readModuleVersion(buildPath, "node-pty"),
+      "@parcel/watcher": await readDeclaredModuleVersion(
+        buildPath,
+        "@parcel/watcher",
+      ),
     }),
   );
   const nativeBuildRoot = await runPhase(
@@ -120,16 +140,18 @@ export async function rebuildNativeModules({
       `${JSON.stringify({ private: true })}\n`,
     );
     await runPhase(progress, "install native module sources", () =>
-      runBufferedCommand(
+      runCommand(
         "npm",
         [
           "install",
           "--ignore-scripts",
+          "--install-strategy=nested",
           "--no-audit",
           "--no-fund",
           "--save-exact",
           `better-sqlite3@${versions["better-sqlite3"]}`,
           `node-pty@${versions["node-pty"]}`,
+          `@parcel/watcher@${versions["@parcel/watcher"]}`,
         ],
         {
           cwd: nativeBuildRoot,
@@ -151,6 +173,7 @@ export async function rebuildNativeModules({
       arch,
       platform,
       force: true,
+      onlyModules: ["better-sqlite3", "node-pty"],
     };
     await runPhase(progress, "rebuild native modules", () =>
       rebuildImpl === undefined
@@ -167,6 +190,8 @@ export async function rebuildNativeModules({
               "--platform",
               platform,
               "--force",
+              "--only",
+              "better-sqlite3,node-pty",
               "--sequential",
             ],
             {
@@ -185,6 +210,10 @@ export async function rebuildNativeModules({
           recursive: true,
         });
       }
+    });
+    await runPhase(progress, "validate Parcel watcher", async () => {
+      const requireFromBuild = createRequire(join(buildPath, "package.json"));
+      requireFromBuild("@parcel/watcher");
     });
   } finally {
     await runPhase(progress, "clean native module workspace", () =>

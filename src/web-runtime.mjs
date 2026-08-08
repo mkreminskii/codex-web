@@ -36,7 +36,7 @@ export async function startWebRuntime({
     applicationHost = await startHost({
       appRoot: resolvedAppRoot,
       relayUrl: relay.hostUrl,
-      rendererUrl: server.internalUrl,
+      rendererUrl: server.hostPageUrl,
     });
 
     await Promise.race([

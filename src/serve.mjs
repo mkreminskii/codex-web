@@ -291,6 +291,15 @@ function createCapabilityLandingPage(showError) {
 </html>`;
 }
 
+const hostPage = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Codex application host</title>
+</head>
+<body></body>
+</html>`;
+
 function sendText(response, statusCode, text) {
   const payload = Buffer.from(`${text}\n`);
   response.writeHead(statusCode, {
@@ -630,6 +639,15 @@ export async function startWebServer({
       return;
     }
 
+    if (url.pathname === "/__codex_host") {
+      response.setHeader(
+        "Content-Security-Policy",
+        "default-src 'none'; connect-src ws: wss:",
+      );
+      sendHtml(request, response, hostPage);
+      return;
+    }
+
     if (url.pathname === "/__codex_bootstrap") {
       if (bootstrapPayload === null) {
         sendText(response, 503, "Application bootstrap is unavailable");
@@ -685,6 +703,7 @@ export async function startWebServer({
   return {
     url: `${browserOrigin}/?cap=${capability}`,
     internalUrl: `${listenerOrigin}/?cap=${capability}`,
+    hostPageUrl: `${listenerOrigin}/__codex_host?cap=${capability}`,
     origin: listenerOrigin,
     isRequestOriginAllowed(request) {
       const allowedOrigin = requestOrigin(request.headers.host);

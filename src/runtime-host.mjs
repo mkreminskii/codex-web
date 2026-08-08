@@ -181,7 +181,8 @@ export async function startApplicationHost({
     [
       "--no-sandbox",
       "--headless",
-      "--use-angle=swiftshader",
+"--disable-gpu",
+      "--disable-software-rasterizer",
       "--ozone-platform=headless",
       upstreamRoot,
     ],

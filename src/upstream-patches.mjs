@@ -355,6 +355,8 @@ const browserBridgeSource = String.raw`
 
   const bridge = Object.freeze({
     windowType: "electron",
+    acknowledgeChunkedMessage: (transferId, sequence) =>
+      invoke("acknowledgeChunkedMessage", [transferId, sequence]),
     getPreloadStartedAtMs: () => performance.timeOrigin,
     sendMessageFromView: message => {
       if (message.type === "shared-object-set") {
@@ -403,6 +405,7 @@ const browserBridgeSource = String.raw`
 
 function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
   const allowedMethods = [
+    "acknowledgeChunkedMessage",
     "dispatchKeyboardShortcut",
     "getKeyboardShortcuts",
     "sendMessageFromView",
@@ -813,6 +816,103 @@ function patchBrowserFileUrls(source, bundleLabel) {
     match,
     `${originAlias}=\`\`/* ${browserFileUrlMarker} */,${pathPrefixAlias}=\`/@fs\``,
   );
+}
+
+const disableMainSentryMarker = "__codex_disable_main_sentry";
+const catchSentryGpuInfoMarker = "__codex_catch_sentry_gpu_info";
+const disableWorkerSentryMarker = "__codex_disable_worker_sentry";
+const mainSentryInitPattern =
+  /function ([A-Za-z_$][\w$]*)\(\)\{(let [^;]+;)(?=return [A-Za-z_$][\w$]*\(\{dsn:)(?=[\s\S]{0,3000}?\{desktopSentry:([A-Za-z_$][\w$]*),release:([A-Za-z_$][\w$]*),tracesSampleRate:0\}\})/g;
+const sentryGpuInfoPattern =
+  /\(await ([A-Za-z_$][\w$]*)\.app\.getGPUInfo\(([A-Za-z_$][\w$]*\.infoLevel)\)\)\.gpuDevice\.map\(([A-Za-z_$][\w$]*)\)/g;
+const workerSentryInitPattern =
+  /([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)===`git`\?async ([A-Za-z_$][\w$]*)=>\{await ([A-Za-z_$][\w$]*)\.request\(\{method:`otel-export`,params:\{bytes:\5\}\}\)\}:void 0\)/g;
+
+function patchMainSentry(source) {
+  if (
+    source.includes(disableMainSentryMarker) &&
+    source.includes(catchSentryGpuInfoMarker)
+  ) {
+    return source;
+  }
+
+  const initMatches = [...source.matchAll(mainSentryInitPattern)];
+  if (initMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream main-process Sentry initializer, found ${initMatches.length}`,
+    );
+  }
+  const gpuInfoMatches = [...source.matchAll(sentryGpuInfoPattern)];
+  if (gpuInfoMatches.length !== 1) {
+    throw new Error(
+      `Expected one upstream Sentry GPU info collector, found ${gpuInfoMatches.length}`,
+    );
+  }
+
+  const [
+    initSource,
+    _initFunctionAlias,
+    _initPreamble,
+    desktopSentryAlias,
+    releaseAlias,
+  ] = initMatches[0];
+  let patched = source.replace(
+    initSource,
+    `${initSource}if(process.env.CODEX_WEB_HEADLESS===\`1\`)return/* ${disableMainSentryMarker} */` +
+      `{desktopSentry:${desktopSentryAlias},release:${releaseAlias},tracesSampleRate:0};`,
+  );
+  const [gpuInfoSource, electronAlias, infoLevelSource, gpuMapperAlias] =
+    gpuInfoMatches[0];
+  patched = patched.replace(
+    gpuInfoSource,
+    `(await Promise.resolve().then(()=>${electronAlias}.app.getGPUInfo(${infoLevelSource}))` +
+      `.catch(()=>({gpuDevice:[]}))).gpuDevice.map(${gpuMapperAlias})` +
+      `/* ${catchSentryGpuInfoMarker} */`,
+  );
+  return patched;
+}
+
+function patchWorkerSentry(source) {
+  if (source.includes(disableWorkerSentryMarker)) {
+    return source;
+  }
+
+  const matches = [...source.matchAll(workerSentryInitPattern)];
+  if (matches.length !== 1) {
+    throw new Error(
+      `Expected one upstream worker Sentry initializer, found ${matches.length}`,
+    );
+  }
+
+  return source.replace(
+    matches[0][0],
+    `process.env.CODEX_WEB_HEADLESS===\`1\`?void 0:${matches[0][0]}` +
+      `/* ${disableWorkerSentryMarker} */`,
+  );
+}
+
+async function findMainSentryBundle(buildRoot, buildEntries) {
+  const candidates = [];
+  for (const name of buildEntries.filter(name => name.endsWith(".js"))) {
+    const path = join(buildRoot, name);
+    const source = await readFile(path, "utf8");
+    const initCount = [...source.matchAll(mainSentryInitPattern)].length;
+    const gpuInfoCount = [...source.matchAll(sentryGpuInfoPattern)].length;
+    if (
+      source.includes(disableMainSentryMarker) ||
+      source.includes(catchSentryGpuInfoMarker) ||
+      initCount !== 0 ||
+      gpuInfoCount !== 0
+    ) {
+      candidates.push({ name, path, source });
+    }
+  }
+  if (candidates.length !== 1) {
+    throw new Error(
+      `Expected one upstream main-process Sentry bundle, found ${candidates.length}`,
+    );
+  }
+  return candidates[0];
 }
 
 function patchMainProcess(source) {
@@ -1373,6 +1473,7 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
   }
 
   const appServerTransport = await findAppServerTransportBundle(buildRoot, buildEntries);
+  const mainSentryBundle = await findMainSentryBundle(buildRoot, buildEntries);
   const mainPath = join(buildRoot, mainCandidates[0]);
   const workerPath = join(buildRoot, "worker.js");
   const indexPath = join(webviewRoot, "index.html");
@@ -1400,7 +1501,7 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     patchMainProcess(mainProcess),
     "main-process",
   );
-  const patchedWorker = patchBrowserFileUrls(worker, "worker");
+  let patchedWorker = patchWorkerSentry(patchBrowserFileUrls(worker, "worker"));
   const patchedIndex = patchWebviewIndex(index);
   const patchedRenderer = patchBrowserFileUrls(
     patchRendererRemoteTelemetry(
@@ -1433,11 +1534,24 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     null,
     2,
   )}\n`;
+  let patchedMainSentryBundle = null;
+  if (mainSentryBundle.path === preloadPath) {
+    patchedPreload = patchMainSentry(patchedPreload);
+  } else if (mainSentryBundle.path === mainPath) {
+    patchedMainProcess = patchMainSentry(patchedMainProcess);
+  } else if (mainSentryBundle.path === workerPath) {
+    patchedWorker = patchMainSentry(patchedWorker);
+  } else {
+    patchedMainSentryBundle = patchMainSentry(mainSentryBundle.source);
+  }
+
   let patchedAppServerTransport = null;
   if (appServerTransport.path === preloadPath) {
     patchedPreload = patchAppServerTransport(patchedPreload);
   } else if (appServerTransport.path === mainPath) {
     patchedMainProcess = patchAppServerTransport(patchedMainProcess);
+  } else if (appServerTransport.path === mainSentryBundle.path) {
+    patchedMainSentryBundle = patchAppServerTransport(patchedMainSentryBundle);
   } else {
     patchedAppServerTransport = patchAppServerTransport(appServerTransport.source);
   }
@@ -1452,6 +1566,12 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
   );
   if (patchedAppServerTransport !== null) {
     patchedAppServerTransport = patchedAppServerTransport.replaceAll(
+      appServerAnalyticsDefaultFlag,
+      appServerAnalyticsDisabledArguments,
+    );
+  }
+  if (patchedMainSentryBundle !== null) {
+    patchedMainSentryBundle = patchedMainSentryBundle.replaceAll(
       appServerAnalyticsDefaultFlag,
       appServerAnalyticsDisabledArguments,
     );
@@ -1471,12 +1591,16 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     ...(patchedAppServerTransport === null
       ? []
       : [writeFile(appServerTransport.path, patchedAppServerTransport)]),
+    ...(patchedMainSentryBundle === null
+      ? []
+      : [writeFile(mainSentryBundle.path, patchedMainSentryBundle)]),
   ]);
 
   return {
     mainBundle: mainCandidates[0],
     workerBundle: "worker.js",
     appServerTransportBundle: appServerTransport.name,
+    mainSentryBundle: mainSentryBundle.name,
     rendererBundle: rendererCandidates[0],
     browserBridge: "__codex_browser_bridge.js",
   };

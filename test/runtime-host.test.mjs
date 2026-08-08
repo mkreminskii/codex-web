@@ -103,6 +103,9 @@ test("reuses the app-server daemon through the upstream proxy", async context =>
     calls[1].options.env.CODEX_WEB_APP_SERVER_SOCKET_PATH,
     join(environment.CODEX_HOME, "app-server-control", "app-server-control.sock"),
   );
+  assert.equal(calls[1].arguments_.includes("--disable-gpu"), true);
+  assert.equal(calls[1].arguments_.includes("--disable-software-rasterizer"), true);
+  assert.equal(calls[1].arguments_.includes("--use-angle=swiftshader"), false);
 
   await host.stop();
   assert.deepEqual(electronChild.signals, ["SIGTERM"]);

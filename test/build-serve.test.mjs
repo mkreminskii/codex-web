@@ -104,8 +104,21 @@ async function createSyntheticDmg(root) {
     "let M,s,d,f,q=360,j=320,U={items:[]},l={BrowserWindow:class{},Menu:{setApplicationMenu(){}}},p0=async()=>null,O=async()=>{let e=l.BrowserWindow.getFocusedWindow();return e&&!e.isDestroyed()?e:p0()},v={sendMessageToWindow(){}},z=async e=>{let t=await O();t&&v.sendMessageToWindow(t,{type:`command-menu`,query:e})},C=[{id:`copy`,electron:{isOverridableByBrowserWebpage:!0}}],A=new Set(C.filter(e=>`electron`in e&&e.electron!=null&&`isOverridableByBrowserWebpage`in e.electron&&e.electron.isOverridableByBrowserWebpage===!0).map(({id:e})=>e.id)),Q=new Set;for(let e of C)if(!A.has(e.id))Q.add(e.id);new l.BrowserWindow({backgroundColor:M,show:s,parent:d,...f===void 0?{}:{focusable:f},webPreferences:{}});async function A0({buildFlavor:e,parent:t}){if(false)return;let i=`Codex`,u=`Build`,y=`Version`,p={htmlIconDataUrl:null},x=false,h=`OK`,m=`About Codex`,S=new l.BrowserWindow({width:q,height:j,useContentSize:!0,title:m,show:!1,resizable:!1,minimizable:!1,maximizable:!1,fullscreenable:!1,autoHideMenuBar:!0,webPreferences:{}});await S.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(H({appDisplayName:i,buildInfoLabel:u,buildInfoText:y,iconDataUrl:p.htmlIconDataUrl,isDark:x,okLabel:h,title:m}))}`)}l.Menu.setApplicationMenu(U);function H(){return`<button id=\"ok\">OK</button>`}function W(){return[`app-server`,`--analytics-default-enabled`,`wsl`]}var mainFileOrigin=`app://fs`,mainFilePrefix=`/@fs`;\n",
   );
   await writeFile(
+    join(buildRoot, "window-all-closed-fixture.js"),
+    [
+      "var sentryApi={captureException(){},setUser(){}},config={appVersion:`1.2.3`,buildFlavor:`prod`,dsn:`fixture`},electron={app:{getGPUInfo:async()=>({gpuDevice:[]})}};\n",
+      "function parseVersion(version){return{version}}function releaseVersion(version){return version}function initSentry(){}function setTag(){}function createIntegration(factory){return factory}function mapGpu(device){return device}\n",
+      "function MV(){let e=parseVersion(config.appVersion),t=config.buildFlavor!==`prod`,r=releaseVersion(e.version);return initSentry({dsn:config.dsn}),setTag(`preRelease`,t),{desktopSentry:sentryApi,release:r,tracesSampleRate:0}}\n",
+      "var gpuContext=createIntegration((e={infoLevel:`basic`})=>{let t;return{name:`GpuContext`,processEvent:async n=>{if(t===void 0&&(t=(await electron.app.getGPUInfo(e.infoLevel)).gpuDevice.map(mapGpu)),t.length===1)n.contexts={gpu:t[0]};return n}}});\n",
+    ].join(""),
+  );
+  await writeFile(
     join(buildRoot, "worker.js"),
-    "var workerFileOrigin=`app://fs`,workerFilePrefix=`/@fs`;\n",
+    [
+      "function initWorkerSentry(){}let sentryOptions={},rewriteRoot=`app:///`,workerId=`git`,rpc={request:async()=>{}};",
+      "initWorkerSentry(sentryOptions,rewriteRoot,workerId===`git`?async e=>{await rpc.request({method:`otel-export`,params:{bytes:e}})}:void 0);",
+      "var workerFileOrigin=`app://fs`,workerFilePrefix=`/@fs`;\n",
+    ].join(""),
   );
   await createPackage(appSource, join(resourcesRoot, "app.asar"));
 
@@ -190,6 +203,7 @@ test("build and serve the patched upstream interface", async (context) => {
   );
   assert.match(preloadSource, /CODEX_WEB_RELAY_URL/);
   assert.match(preloadSource, /codex_desktop:connect-app-host/);
+  assert.match(preloadSource, /acknowledgeChunkedMessage/);
   const mainSource = await readFile(
     join(result.outputRoot, "upstream", ".vite", "build", "main-fixture.js"),
     "utf8",
@@ -219,6 +233,35 @@ test("build and serve the patched upstream interface", async (context) => {
   );
   assert.match(workerSource, /__codex_browser_file_urls/);
   assert.doesNotMatch(workerSource, /app:\/\/fs/);
+  assert.match(workerSource, /__codex_disable_worker_sentry/);
+  assert.match(
+    workerSource,
+    /process\.env\.CODEX_WEB_HEADLESS===`1`\?void 0:initWorkerSentry\(/,
+  );
+  const mainSentrySource = await readFile(
+    join(
+      result.outputRoot,
+      "upstream",
+      ".vite",
+      "build",
+      "window-all-closed-fixture.js",
+    ),
+    "utf8",
+  );
+  assert.match(mainSentrySource, /__codex_disable_main_sentry/);
+  assert.match(mainSentrySource, /__codex_catch_sentry_gpu_info/);
+  assert.match(
+    mainSentrySource,
+    /if\(process\.env\.CODEX_WEB_HEADLESS===`1`\)return[\s\S]*;return initSentry\(/,
+  );
+  assert.match(
+    mainSentrySource,
+    /Promise\.resolve\(\)\.then\(\(\)=>electron\.app\.getGPUInfo\(e\.infoLevel\)\)\.catch\(\(\)=>\(\{gpuDevice:\[\]\}\)\)/,
+  );
+  assert.doesNotMatch(
+    mainSentrySource,
+    /\(await electron\.app\.getGPUInfo\(e\.infoLevel\)\)\.gpuDevice/,
+  );
   assert.match(preloadSource, /getKeyboardShortcuts/);
   assert.match(mainSource, /`-c`,`analytics\.enabled=false`/);
   assert.doesNotMatch(mainSource, /--analytics-default-enabled/);
@@ -314,6 +357,24 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.equal(protectedAsset.status, 403);
 
   const authenticatedHeaders = { Cookie: cookie.split(";")[0] };
+
+  const hostCapabilityResponse = await fetch(server.hostPageUrl, {
+    redirect: "manual",
+  });
+  assert.equal(hostCapabilityResponse.status, 303);
+  assert.equal(hostCapabilityResponse.headers.get("location"), "/__codex_host");
+  const hostCookie = hostCapabilityResponse.headers.get("set-cookie");
+  const hostPageResponse = await fetch(new URL("/__codex_host", server.url), {
+    headers: { Cookie: hostCookie.split(";")[0] },
+  });
+  assert.equal(hostPageResponse.status, 200);
+  assert.equal(
+    hostPageResponse.headers.get("content-security-policy"),
+    "default-src 'none'; connect-src ws: wss:",
+  );
+  const hostPage = await hostPageResponse.text();
+  assert.match(hostPage, /Codex application host/);
+  assert.doesNotMatch(hostPage, /__codex_browser_bridge|upstream interface/);
 
   const localImagePath = join(root, "local media #?.png");
   const localImageBytes = Buffer.from("local image fixture");
@@ -418,6 +479,7 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.equal(bridge.status, 200);
   const bridgeSource = await bridge.text();
   assert.match(bridgeSource, /electronBridge/);
+  assert.match(bridgeSource, /acknowledgeChunkedMessage/);
   assert.match(bridgeSource, /connect-app-host/);
   assert.match(bridgeSource, /app-host-message/);
   assert.match(bridgeSource, /bootstrap\.sharedObjectSnapshot\[key\]/);
@@ -492,6 +554,10 @@ test("build and serve the patched upstream interface", async (context) => {
     "https://codex.example.test/?cap=proxy-fixture",
   );
   assert.match(proxiedServer.internalUrl, /^http:\/\/127\.0\.0\.1:/);
+  assert.match(
+    proxiedServer.hostPageUrl,
+    /^http:\/\/127\.0\.0\.1:\d+\/__codex_host\?cap=proxy-fixture$/,
+  );
 
   const proxiedRequestUrl = new URL(proxiedServer.internalUrl);
   const proxiedCapability = await new Promise((resolve, reject) => {
