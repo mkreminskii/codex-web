@@ -105,6 +105,12 @@ test("reuses the app-server daemon through the upstream proxy", async context =>
   );
   assert.equal(calls[1].arguments_.includes("--disable-gpu"), true);
   assert.equal(calls[1].arguments_.includes("--disable-software-rasterizer"), true);
+  assert.equal(
+    calls[1].arguments_.includes(
+      "--enable-features=PartitionAllocMemoryReclaimer",
+    ),
+    true,
+  );
   assert.equal(calls[1].arguments_.includes("--use-angle=swiftshader"), false);
 
   await host.stop();

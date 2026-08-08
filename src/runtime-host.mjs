@@ -183,6 +183,7 @@ export async function startApplicationHost({
       "--headless",
 "--disable-gpu",
       "--disable-software-rasterizer",
+      "--enable-features=PartitionAllocMemoryReclaimer",
       "--ozone-platform=headless",
       upstreamRoot,
     ],
