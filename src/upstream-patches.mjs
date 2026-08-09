@@ -372,7 +372,7 @@ const browserBridgeSource = String.raw`
     // The upstream renderer uses its web menu when this Electron-only method is absent.
     getFastModeRolloutMetrics: () => invoke("getFastModeRolloutMetrics"),
     getSharedObjectSnapshotValue: key => bootstrap.sharedObjectSnapshot[key],
-    getInitialSidebarBootstrap: () => bootstrap.initialSidebarBootstrap,
+    getInitialSidebarBootstrap: () => null,
     getSystemThemeVariant: () => systemThemeVariant,
     subscribeToSystemThemeVariant: callback => {
       const listener = event => {
@@ -425,7 +425,6 @@ function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
       appSessionId: ${bridgeAlias}.getAppSessionId(),
       buildFlavor: ${bridgeAlias}.getBuildFlavor(),
       deviceCheckSupported: ${bridgeAlias}.isDeviceCheckSupported(),
-      initialSidebarBootstrap: ${bridgeAlias}.getInitialSidebarBootstrap(),
       intelMacBuild: ${bridgeAlias}.isIntelMacBuild(),
       sentryInitOptions: null,
       sharedObjectSnapshot: ${sharedObjectAlias},

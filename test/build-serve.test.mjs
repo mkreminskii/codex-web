@@ -204,6 +204,7 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.match(preloadSource, /CODEX_WEB_RELAY_URL/);
   assert.match(preloadSource, /codex_desktop:connect-app-host/);
   assert.match(preloadSource, /acknowledgeChunkedMessage/);
+  assert.doesNotMatch(preloadSource, /initialSidebarBootstrap/);
   const mainSource = await readFile(
     join(result.outputRoot, "upstream", ".vite", "build", "main-fixture.js"),
     "utf8",
@@ -490,6 +491,8 @@ test("build and serve the patched upstream interface", async (context) => {
   assert.match(bridgeSource, /value\.messages/);
   assert.match(bridgeSource, /handleHostNotification/);
   assert.doesNotMatch(bridgeSource, /getSentryInitOptions/);
+  assert.match(bridgeSource, /getInitialSidebarBootstrap: \(\) => null/);
+  assert.doesNotMatch(bridgeSource, /initialSidebarBootstrap/);
 
   assert.match(bridgeSource, /triggerSentryTestError: \(\) => undefined/);
   assert.doesNotMatch(bridgeSource, /bootstrap\.sentryInitOptions/);
