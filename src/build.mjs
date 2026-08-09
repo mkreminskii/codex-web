@@ -71,7 +71,7 @@ export async function buildWebWrapper({
     );
     const patches = await runPhase(progress, "apply upstream patches", async () => {
       const { applyUpstreamWebPatches } = await import("./upstream-patches.mjs");
-      return applyUpstreamWebPatches(join(candidateRoot, "upstream"));
+      return applyUpstreamWebPatches(join(candidateRoot, "upstream"), packageJson.version);
     });
     const runtime = await runPhase(progress, "stage Electron runtime", () =>
       stageRuntime({

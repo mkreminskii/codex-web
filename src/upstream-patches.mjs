@@ -1368,6 +1368,147 @@ function patchBrowserSidePanelAction(source) {
   );
 }
 
+const pinnedApplicationVersion = "26.803.41515";
+const subagentMetadataMarker = "__codex_subagent_metadata";
+const subagentHeaderMarker = "__codex_subagent_header_metadata";
+const subagentHeaderTrailingMarker = "__codex_subagent_header_trailing";
+
+function expectOneUpstreamAnchor(source, pattern, label) {
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length !== 1) {
+    throw new Error(`Expected one upstream ${label}, found ${matches.length}`);
+  }
+  return matches[0];
+}
+
+function patchRendererSubagentMetadata(source) {
+  if (source.includes(subagentMetadataMarker)) {
+    return source;
+  }
+
+  expectOneUpstreamAnchor(source, /function M1\(e\)\{/g, "model formatter");
+  expectOneUpstreamAnchor(source, /function Atr\(e\)\{/g, "fast service-tier predicate");
+  expectOneUpstreamAnchor(
+    source,
+    /Ek=fk\(\(\{latestThreadSettings:e\}\)=>e\?\?null/g,
+    "thread settings selector",
+  );
+  expectOneUpstreamAnchor(
+    source,
+    /frr=fk\(\(\{latestTokenUsageInfo:e,resumeState:t\}\)=>t===`resumed`\?e:null/g,
+    "token usage selector",
+  );
+  expectOneUpstreamAnchor(source, /function GVs\(e\)\{/g, "context usage converter");
+  expectOneUpstreamAnchor(source, /function VVs\(e\)\{[\s\S]*?contextUsage/g, "context usage donut");
+  expectOneUpstreamAnchor(source, /function U1\(e\)\{/g, "model display");
+  expectOneUpstreamAnchor(source, /function Po\(e,t,n\)\{/g, "thread state hook");
+  const exportMatch = expectOneUpstreamAnchor(source, /export\{/g, "renderer export block");
+
+  const component = [
+    "function __codexSubagentMetadata({conversationId,effortNode,model}){",
+    "let tokenUsage=Po(frr,conversationId),contextUsage=GVs(tokenUsage),",
+    "settings=Po(Ek,conversationId),",
+    "displayName=model==null?null:M1(model).replace(/^GPT-/iu,``).replaceAll(`-`,` `),",
+    "serviceTierIconKind=Atr(settings?.serviceTier)?`fast`:null,",
+    "modelNode=model==null?null:(0,V2.jsx)(U1,{model,displayName,serviceTierIconKind,stripGptPrefix:!0});",
+    "if(contextUsage.percent==null&&modelNode==null&&effortNode==null)return null;",
+    "return(0,V2.jsx)(`span`,{className:`ms-auto flex min-w-0 shrink-0 items-center gap-1.5 text-xs text-token-description-foreground`,",
+    "children:[(0,V2.jsx)(VVs,{contextUsage}),modelNode,effortNode]})",
+    "}",
+    "/* __codex_subagent_metadata */",
+  ].join("");
+
+  return (
+    source.slice(0, exportMatch.index) +
+    component +
+    source.slice(exportMatch.index).replace(
+      "export{",
+      "export{__codexSubagentMetadata,Ek as __codexSubagentThreadSettings,",
+    )
+  );
+}
+
+function patchLocalConversationPage(source) {
+  if (source.includes(subagentHeaderMarker)) {
+    return source;
+  }
+
+  expectOneUpstreamAnchor(
+    source,
+    /localConversation\.subagentsPanel\.back/g,
+    "subagent transcript back label",
+  );
+  expectOneUpstreamAnchor(source, /function Wo\(e\)\{/g, "selected subagent header");
+  expectOneUpstreamAnchor(source, /function Go\(e\)\{/g, "selected subagent header boundary");
+  const importMatch = expectOneUpstreamAnchor(
+    source,
+    /\}from"\.\/app-initial-[^"]+\.js"/g,
+    "app-initial import",
+  );
+  const headerStart = source.indexOf("function Wo(e){");
+  const headerEnd = source.indexOf("function Go(e){", headerStart);
+  if (headerEnd <= headerStart) {
+    throw new Error("Upstream selected subagent header boundary was not found");
+  }
+
+  const header = [
+    "function Wo(e){",
+    "let{conversationId:n,displayName:r,onBack:i}=e,a=Zn(),",
+    "o=a.formatMessage({id:`localConversation.subagentsPanel.back`,defaultMessage:`Back to subagents`,description:`Accessible label for returning from a subagent transcript to the subagent list`}),",
+    "s=U(Yr,n),c=U(Se,n),d=U(__codexSubagentThreadSettings,n),m=s||d?.model,h=c??d?.effort,l=A(h)?h:null,u=l==null?null:(0,Z.jsx)(Ii,{effort:l});",
+    "return(0,Z.jsx)(Zi,{backAriaLabel:o,label:r,seed:n,onBack:i,",
+    "trailing:(0,Z.jsx)(__codexSubagentMetadata,{conversationId:n,model:m,effortNode:u})})",
+    "}",
+    `/* ${subagentHeaderMarker} */`,
+  ].join("");
+
+  let patched = source.slice(0, importMatch.index) +
+    source.slice(importMatch.index).replace(
+      importMatch[0],
+      `,__codexSubagentMetadata,__codexSubagentThreadSettings${importMatch[0]}`,
+    );
+  const patchedHeaderStart = patched.indexOf("function Wo(e){");
+  const patchedHeaderEnd = patched.indexOf("function Go(e){", patchedHeaderStart);
+  patched =
+    patched.slice(0, patchedHeaderStart) +
+    header +
+    patched.slice(patchedHeaderEnd);
+  return patched;
+}
+
+function patchSubagentPanelHeader(source) {
+  if (source.includes(subagentHeaderTrailingMarker)) {
+    return source;
+  }
+
+  expectOneUpstreamAnchor(source, /function f\(e\)\{/g, "subagent panel header");
+  expectOneUpstreamAnchor(source, /function p\(e\)\{/g, "subagent panel header boundary");
+  expectOneUpstreamAnchor(source, /backAriaLabel/g, "subagent panel back label");
+  expectOneUpstreamAnchor(
+    source,
+    /className:`flex h-12 shrink-0 items-center gap-2 border-b border-token-border-heavy px-4`/g,
+    "subagent panel header layout",
+  );
+  expectOneUpstreamAnchor(source, /children:\[c,u,d\]/g, "subagent panel header children");
+  const headerStart = source.indexOf("function f(e){");
+  const headerEnd = source.indexOf("function p(e){", headerStart);
+  if (headerEnd <= headerStart) {
+    throw new Error("Upstream subagent panel header boundary was not found");
+  }
+
+  const header = [
+    "function f(e){",
+    "let{backAriaLabel:r,label:i,seed:a,onBack:o,trailing:s}=e,",
+    "c=(0,_.jsx)(`button`,{type:`button`,className:`flex size-6 cursor-interaction items-center justify-center rounded-md text-token-text-secondary hover:bg-token-bg-secondary hover:text-token-foreground focus-visible:bg-token-bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2`,\"aria-label\":r,onClick:o,children:(0,_.jsx)(l,{className:`icon-xs`})}),",
+    "u=(0,_.jsx)(n,{seed:a,className:`size-6`,\"aria-hidden\":!0}),",
+    "d=(0,_.jsx)(`span`,{className:`min-w-0 flex-1 truncate text-sm font-medium`,children:i});",
+    "return(0,_.jsxs)(`div`,{className:`flex h-12 shrink-0 items-center gap-2 border-b border-token-border-heavy px-4`,children:[c,u,d,s]})",
+    "}",
+    `/* ${subagentHeaderTrailingMarker} */`,
+  ].join("");
+
+  return source.slice(0, headerStart) + header + source.slice(headerEnd);
+}
 function createPwaIconSvg(png, size) {
   const source = png.toString("base64");
   return [
@@ -1417,7 +1558,12 @@ function patchWebviewIndex(source) {
   return patched;
 }
 
-export async function applyUpstreamWebPatches(upstreamRoot) {
+export async function applyUpstreamWebPatches(upstreamRoot, applicationVersion) {
+  if (applicationVersion !== pinnedApplicationVersion) {
+    throw new Error(
+      `Unsupported Codex Desktop application version ${applicationVersion ?? "unknown"}; expected ${pinnedApplicationVersion}`,
+    );
+  }
   const preloadPath = join(upstreamRoot, ".vite", "build", "preload.js");
   const buildRoot = join(upstreamRoot, ".vite", "build");
   const webviewRoot = join(upstreamRoot, "webview");
@@ -1441,6 +1587,22 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
   if (rendererCandidates.length !== 1) {
     throw new Error(
       `Expected one upstream webview renderer bundle, found ${rendererCandidates.length}`,
+    );
+  }
+  const localConversationCandidates = assetEntries.filter(
+    name => name.startsWith("local-conversation-page-") && name.endsWith(".js"),
+  );
+  if (localConversationCandidates.length !== 1) {
+    throw new Error(
+      `Expected one upstream local conversation page bundle, found ${localConversationCandidates.length}`,
+    );
+  }
+  const subagentPanelCandidates = assetEntries.filter(
+    name => name.startsWith("subagent-panel-") && name.endsWith(".js"),
+  );
+  if (subagentPanelCandidates.length !== 1) {
+    throw new Error(
+      `Expected one upstream subagent panel bundle, found ${subagentPanelCandidates.length}`,
     );
   }
   const iconCandidates = assetEntries.filter(
@@ -1477,24 +1639,37 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
   const workerPath = join(buildRoot, "worker.js");
   const indexPath = join(webviewRoot, "index.html");
   const rendererPath = join(assetsRoot, rendererCandidates[0]);
+  const localConversationPath = join(assetsRoot, localConversationCandidates[0]);
+  const subagentPanelPath = join(assetsRoot, subagentPanelCandidates[0]);
   const sidePanelPath = join(assetsRoot, sidePanelCandidates[0].name);
   const bridgePath = join(webviewRoot, "__codex_browser_bridge.js");
   const iconPath = join(assetsRoot, iconCandidates[0]);
 
-  const [preload, mainProcess, worker, index, renderer, sidePanel, appIcon] =
-    await Promise.all([
-      appServerTransport.path === preloadPath
-        ? appServerTransport.source
-        : readFile(preloadPath, "utf8"),
-      appServerTransport.path === mainPath
-        ? appServerTransport.source
-        : readFile(mainPath, "utf8"),
-      readFile(workerPath, "utf8"),
-      readFile(indexPath, "utf8"),
-      readFile(rendererPath, "utf8"),
-      sidePanelCandidates[0].source,
-      readFile(iconPath),
-    ]);
+  const [
+    preload,
+    mainProcess,
+    worker,
+    index,
+    renderer,
+    localConversationPage,
+    subagentPanel,
+    sidePanel,
+    appIcon,
+  ] = await Promise.all([
+    appServerTransport.path === preloadPath
+      ? appServerTransport.source
+      : readFile(preloadPath, "utf8"),
+    appServerTransport.path === mainPath
+      ? appServerTransport.source
+      : readFile(mainPath, "utf8"),
+    readFile(workerPath, "utf8"),
+    readFile(indexPath, "utf8"),
+    readFile(rendererPath, "utf8"),
+    readFile(localConversationPath, "utf8"),
+    readFile(subagentPanelPath, "utf8"),
+    sidePanelCandidates[0].source,
+    readFile(iconPath),
+  ]);
   let patchedPreload = patchPreload(preload);
   let patchedMainProcess = patchBrowserFileUrls(
     patchMainProcess(mainProcess),
@@ -1503,11 +1678,19 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
   let patchedWorker = patchWorkerSentry(patchBrowserFileUrls(worker, "worker"));
   const patchedIndex = patchWebviewIndex(index);
   const patchedRenderer = patchBrowserFileUrls(
-    patchRendererRemoteTelemetry(
-      patchDefaultSidebarRows(patchProfilePetAction(patchWebviewRenderer(renderer))),
+    patchRendererSubagentMetadata(
+      patchRendererRemoteTelemetry(
+        patchDefaultSidebarRows(
+          patchProfilePetAction(patchWebviewRenderer(renderer)),
+        ),
+      ),
     ),
     "renderer",
   );
+  const patchedLocalConversationPage = patchLocalConversationPage(
+    localConversationPage,
+  );
+  const patchedSubagentPanel = patchSubagentPanelHeader(subagentPanel);
   const patchedSidePanel = patchBrowserSidePanelAction(sidePanel);
   const webManifest = `${JSON.stringify(
     {
@@ -1582,6 +1765,8 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     writeFile(workerPath, patchedWorker),
     writeFile(indexPath, patchedIndex),
     writeFile(rendererPath, patchedRenderer),
+    writeFile(localConversationPath, patchedLocalConversationPage),
+    writeFile(subagentPanelPath, patchedSubagentPanel),
     writeFile(sidePanelPath, patchedSidePanel),
     writeFile(bridgePath, browserBridgeSource),
     writeFile(join(webviewRoot, "manifest.json"), webManifest),
@@ -1601,6 +1786,8 @@ export async function applyUpstreamWebPatches(upstreamRoot) {
     appServerTransportBundle: appServerTransport.name,
     mainSentryBundle: mainSentryBundle.name,
     rendererBundle: rendererCandidates[0],
+    localConversationPageBundle: localConversationCandidates[0],
+    subagentPanelBundle: subagentPanelCandidates[0],
     browserBridge: "__codex_browser_bridge.js",
   };
 }
