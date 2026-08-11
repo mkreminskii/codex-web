@@ -1368,7 +1368,7 @@ function patchBrowserSidePanelAction(source) {
   );
 }
 
-const pinnedApplicationVersion = "26.803.41515";
+const pinnedApplicationVersion = "26.803.81509";
 const subagentMetadataMarker = "__codex_subagent_metadata";
 const subagentHeaderMarker = "__codex_subagent_header_metadata";
 const subagentHeaderTrailingMarker = "__codex_subagent_header_trailing";
@@ -1386,34 +1386,44 @@ function patchRendererSubagentMetadata(source) {
     return source;
   }
 
-  expectOneUpstreamAnchor(source, /function M1\(e\)\{/g, "model formatter");
-  expectOneUpstreamAnchor(source, /function Atr\(e\)\{/g, "fast service-tier predicate");
+  expectOneUpstreamAnchor(source, /function r0\(e\)\{/g, "model formatter");
+  expectOneUpstreamAnchor(source, /function Xer\(e\)\{/g, "fast service-tier predicate");
   expectOneUpstreamAnchor(
     source,
-    /Ek=fk\(\(\{latestThreadSettings:e\}\)=>e\?\?null/g,
+    /sA=qk\(\(\{latestThreadSettings:e\}\)=>e\?\?null/g,
     "thread settings selector",
   );
   expectOneUpstreamAnchor(
     source,
-    /frr=fk\(\(\{latestTokenUsageInfo:e,resumeState:t\}\)=>t===`resumed`\?e:null/g,
+    /knr=qk\(\(\{latestModel:e\}\)=>e\)/g,
+    "latest model selector",
+  );
+  expectOneUpstreamAnchor(
+    source,
+    /Anr=qk\(\(\{latestReasoningEffort:e\}\)=>e\)/g,
+    "latest reasoning effort selector",
+  );
+  expectOneUpstreamAnchor(
+    source,
+    /Mnr=qk\(\(\{latestTokenUsageInfo:e,resumeState:t\}\)=>t===`resumed`\?e:null/g,
     "token usage selector",
   );
-  expectOneUpstreamAnchor(source, /function GVs\(e\)\{/g, "context usage converter");
-  expectOneUpstreamAnchor(source, /function VVs\(e\)\{[\s\S]*?contextUsage/g, "context usage donut");
-  expectOneUpstreamAnchor(source, /function U1\(e\)\{/g, "model display");
-  expectOneUpstreamAnchor(source, /function Po\(e,t,n\)\{/g, "thread state hook");
+  expectOneUpstreamAnchor(source, /function dHs\(e\)\{/g, "context usage converter");
+  expectOneUpstreamAnchor(source, /function sHs\(e\)\{[\s\S]*?contextUsage/g, "context usage donut");
+  expectOneUpstreamAnchor(source, /function u0\(e\)\{/g, "model display");
+  expectOneUpstreamAnchor(source, /function zo\(e,t,n\)\{/g, "thread state hook");
   const exportMatch = expectOneUpstreamAnchor(source, /export\{/g, "renderer export block");
 
   const component = [
     "function __codexSubagentMetadata({conversationId,effortNode,model}){",
-    "let tokenUsage=Po(frr,conversationId),contextUsage=GVs(tokenUsage),",
-    "settings=Po(Ek,conversationId),",
-    "displayName=model==null?null:M1(model).replace(/^GPT-/iu,``).replaceAll(`-`,` `),",
-    "serviceTierIconKind=Atr(settings?.serviceTier)?`fast`:null,",
-    "modelNode=model==null?null:(0,V2.jsx)(U1,{model,displayName,serviceTierIconKind,stripGptPrefix:!0});",
+    "let tokenUsage=zo(Mnr,conversationId),contextUsage=dHs(tokenUsage),",
+    "settings=zo(sA,conversationId),",
+    "displayName=model==null?null:r0(model).replace(/^GPT-/iu,``).replaceAll(`-`,` `),",
+    "serviceTierIconKind=Xer(settings?.serviceTier)?`fast`:null,",
+    "modelNode=model==null?null:(0,V2.jsx)(u0,{model,displayName,serviceTierIconKind,stripGptPrefix:!0});",
     "if(contextUsage.percent==null&&modelNode==null&&effortNode==null)return null;",
     "return(0,V2.jsx)(`span`,{className:`ms-auto flex min-w-0 shrink-0 items-center gap-1.5 text-xs text-token-description-foreground`,",
-    "children:[(0,V2.jsx)(VVs,{contextUsage}),modelNode,effortNode]})",
+    "children:[(0,V2.jsx)(sHs,{contextUsage}),modelNode,effortNode]})",
     "}",
     "/* __codex_subagent_metadata */",
   ].join("");
@@ -1423,7 +1433,7 @@ function patchRendererSubagentMetadata(source) {
     component +
     source.slice(exportMatch.index).replace(
       "export{",
-      "export{__codexSubagentMetadata,Ek as __codexSubagentThreadSettings,",
+      "export{__codexSubagentMetadata,sA as __codexSubagentThreadSettings,knr as __codexSubagentLatestModel,Anr as __codexSubagentLatestEffort,",
     )
   );
 }
@@ -1453,10 +1463,10 @@ function patchLocalConversationPage(source) {
 
   const header = [
     "function Wo(e){",
-    "let{conversationId:n,displayName:r,onBack:i}=e,a=Zn(),",
+    "let{conversationId:n,displayName:r,onBack:i}=e,a=an(),",
     "o=a.formatMessage({id:`localConversation.subagentsPanel.back`,defaultMessage:`Back to subagents`,description:`Accessible label for returning from a subagent transcript to the subagent list`}),",
-    "s=U(Yr,n),c=U(Se,n),d=U(__codexSubagentThreadSettings,n),m=s||d?.model,h=c??d?.effort,l=A(h)?h:null,u=l==null?null:(0,Z.jsx)(Ii,{effort:l});",
-    "return(0,Z.jsx)(Zi,{backAriaLabel:o,label:r,seed:n,onBack:i,",
+    "s=B(__codexSubagentLatestModel,n),c=B(__codexSubagentLatestEffort,n),d=B(__codexSubagentThreadSettings,n),m=s||d?.model,h=c??d?.effort,u=h==null?null:(0,Z.jsx)(Fi,{effort:h});",
+    "return(0,Z.jsx)(Xi,{backAriaLabel:o,label:r,seed:n,onBack:i,",
     "trailing:(0,Z.jsx)(__codexSubagentMetadata,{conversationId:n,model:m,effortNode:u})})",
     "}",
     `/* ${subagentHeaderMarker} */`,
@@ -1465,7 +1475,7 @@ function patchLocalConversationPage(source) {
   let patched = source.slice(0, importMatch.index) +
     source.slice(importMatch.index).replace(
       importMatch[0],
-      `,__codexSubagentMetadata,__codexSubagentThreadSettings${importMatch[0]}`,
+      `,__codexSubagentMetadata,__codexSubagentThreadSettings,__codexSubagentLatestModel,__codexSubagentLatestEffort${importMatch[0]}`,
     );
   const patchedHeaderStart = patched.indexOf("function Wo(e){");
   const patchedHeaderEnd = patched.indexOf("function Go(e){", patchedHeaderStart);
@@ -1489,7 +1499,7 @@ function patchSubagentPanelHeader(source) {
     /className:`flex h-12 shrink-0 items-center gap-2 border-b border-token-border-heavy px-4`/g,
     "subagent panel header layout",
   );
-  expectOneUpstreamAnchor(source, /children:\[c,u,d\]/g, "subagent panel header children");
+  expectOneUpstreamAnchor(source, /children:\[c,l,d\]/g, "subagent panel header children");
   const headerStart = source.indexOf("function f(e){");
   const headerEnd = source.indexOf("function p(e){", headerStart);
   if (headerEnd <= headerStart) {
@@ -1499,10 +1509,10 @@ function patchSubagentPanelHeader(source) {
   const header = [
     "function f(e){",
     "let{backAriaLabel:r,label:i,seed:a,onBack:o,trailing:s}=e,",
-    "c=(0,_.jsx)(`button`,{type:`button`,className:`flex size-6 cursor-interaction items-center justify-center rounded-md text-token-text-secondary hover:bg-token-bg-secondary hover:text-token-foreground focus-visible:bg-token-bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2`,\"aria-label\":r,onClick:o,children:(0,_.jsx)(l,{className:`icon-xs`})}),",
-    "u=(0,_.jsx)(n,{seed:a,className:`size-6`,\"aria-hidden\":!0}),",
+    "c=(0,_.jsx)(`button`,{type:`button`,className:`flex size-6 cursor-interaction items-center justify-center rounded-md text-token-text-secondary hover:bg-token-bg-secondary hover:text-token-foreground focus-visible:bg-token-bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2`,\"aria-label\":r,onClick:o,children:(0,_.jsx)(u,{className:`icon-xs`})}),",
+    "l=(0,_.jsx)(n,{seed:a,className:`size-6`,\"aria-hidden\":!0}),",
     "d=(0,_.jsx)(`span`,{className:`min-w-0 flex-1 truncate text-sm font-medium`,children:i});",
-    "return(0,_.jsxs)(`div`,{className:`flex h-12 shrink-0 items-center gap-2 border-b border-token-border-heavy px-4`,children:[c,u,d,s]})",
+    "return(0,_.jsxs)(`div`,{className:`flex h-12 shrink-0 items-center gap-2 border-b border-token-border-heavy px-4`,children:[c,l,d,s]})",
     "}",
     `/* ${subagentHeaderTrailingMarker} */`,
   ].join("");

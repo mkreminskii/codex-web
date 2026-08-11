@@ -57,7 +57,7 @@ async function createSyntheticDmg(root) {
     `${JSON.stringify({
       name: "codex",
       productName: "Codex",
-      version: "26.803.41515",
+      version: "26.803.81509",
       devDependencies: { electron: "42.3.0" },
     })}\n`,
   );
@@ -81,7 +81,7 @@ async function createSyntheticDmg(root) {
       "function LGc(e){let E=Fo(Q),m=`codex`;let he=(e,t)=>{let n=a.get(e);if(n?.source===`codex`)return(0,V5.jsx)(DRc,{canPin:!0,floatStatusIconsEnd:!0,hideTimestamp:!0,isGrouped:!1,locationId:C??`unified-sidebar`,onArchiveError:()=>t.onArchiveError(e),onArchiveStart:()=>t.onArchiveStart(e),onArchiveSuccess:()=>t.onArchiveSuccess(e),shortcutLabel:j?.get(n.threadKey),showPinActionOnHover:!0,threadKey:n.threadKey})};return he}\n",
       "let O9c=`https://ab.chatgpt.com/v1`,l5c=`https://chatgpt.com/ces/v1/rgstr`,k9c=`https://ab.chatgpt.com/v1/sdk_exception`,a9c=()=>{},N9c={networkConfig:{api:O9c,logEventUrl:l5c,sdkExceptionUrl:k9c,networkOverrideFunc:a9c}},P9c={...N9c,disableStorage:!0,loggingEnabled:`disabled`};\n",
       "var rendererFileOrigin=`app://fs`,rendererFilePrefix=`/@fs`;\n",
-      "function fk(e){return e}function M1(e){return e}function Atr(e){return e===`fast`}function GVs(e){return e}function VVs(e){let{contextUsage:n}=e;return n}function U1(e){return e}function Po(e,t,n){return null}let Ek=fk(({latestThreadSettings:e})=>e??null),frr=fk(({latestTokenUsageInfo:e,resumeState:t})=>t===`resumed`?e:null);export{};\n",
+      "function qk(e){return e}function r0(e){return e}function Xer(e){return e===`fast`}function dHs(e){return e}function sHs(e){let{contextUsage:n}=e;return n}function u0(e){return e}function zo(e,t,n){return null}let sA=qk(({latestThreadSettings:e})=>e??null),knr=qk(({latestModel:e})=>e),Anr=qk(({latestReasoningEffort:e})=>e),Mnr=qk(({latestTokenUsageInfo:e,resumeState:t})=>t===`resumed`?e:null);export{};\n",
       "let analyticsProvider={submitCodexAnalyticsEvent:r===`chatgpt`?w5c:null};\n",
     ].join(""),
   );
@@ -96,7 +96,7 @@ async function createSyntheticDmg(root) {
     join(assetsRoot, "subagent-panel-fixture.js"),
     [
       'import{n as e}from"./app-initial-fixture.js";',
-      "function f(e){let{backAriaLabel:r,label:i,seed:a,onBack:o}=e,c=(0,_.jsx)(`button`,{\"aria-label\":r,onClick:o}),u=(0,_.jsx)(n,{seed:a}),d=(0,_.jsx)(`span`,{children:i});return(0,_.jsxs)(`div`,{className:`flex h-12 shrink-0 items-center gap-2 border-b border-token-border-heavy px-4`,children:[c,u,d]})}function p(e){return e}\n",
+      "function f(e){let{backAriaLabel:r,label:i,seed:a,onBack:o}=e,c=(0,_.jsx)(`button`,{\"aria-label\":r,onClick:o}),l=(0,_.jsx)(n,{seed:a}),d=(0,_.jsx)(`span`,{children:i});return(0,_.jsxs)(`div`,{className:`flex h-12 shrink-0 items-center gap-2 border-b border-token-border-heavy px-4`,children:[c,l,d]})}function p(e){return e}\n",
     ].join(""),
   );
   await writeFile(
@@ -188,7 +188,7 @@ test("build and serve the patched upstream interface", async (context) => {
   const result = await buildSyntheticWrapper(root, dmgPath);
 
   assert.equal(result.manifest.applicationName, "Codex");
-  assert.equal(result.manifest.applicationVersion, "26.803.41515");
+  assert.equal(result.manifest.applicationVersion, "26.803.81509");
   assert.equal(result.manifest.electronVersion, "42.3.0");
   const patchedIndex = await readFile(
     join(result.outputRoot, "upstream", "webview", "index.html"),
@@ -324,14 +324,14 @@ test("build and serve the patched upstream interface", async (context) => {
     rendererSource,
     /id:`sidebarElectron\.priorityThreads\.details\.codex`/,
   );
-  assert.match(rendererSource, /Ek as __codexSubagentThreadSettings/);
+  assert.match(rendererSource, /sA as __codexSubagentThreadSettings/);
   assert.match(rendererSource, /__codex_subagent_metadata/);
-  assert.match(rendererSource, /GVs\(tokenUsage\)/);
-  assert.match(rendererSource, /VVs,\{contextUsage\}/);
-  assert.match(rendererSource, /Atr\(settings\?\.serviceTier\)\?`fast`/);
+  assert.match(rendererSource, /dHs\(tokenUsage\)/);
+  assert.match(rendererSource, /sHs,\{contextUsage\}/);
+  assert.match(rendererSource, /Xer\(settings\?\.serviceTier\)\?`fast`/);
   assert.match(
     rendererSource,
-    /U1,\{model,displayName,serviceTierIconKind,stripGptPrefix:!0\}/,
+    /u0,\{model,displayName,serviceTierIconKind,stripGptPrefix:!0\}/,
   );
   const metadataStart = rendererSource.indexOf(
     "function __codexSubagentMetadata",
@@ -360,9 +360,9 @@ test("build and serve the patched upstream interface", async (context) => {
     localConversationSource,
     /trailing:\(0,Z\.jsx\)\(__codexSubagentMetadata,/,
   );
-  assert.match(localConversationSource, /U\(Yr,n\)/);
-  assert.match(localConversationSource, /U\(Se,n\)/);
-  assert.match(localConversationSource, /U\(__codexSubagentThreadSettings,n\)/);
+  assert.match(localConversationSource, /B\(__codexSubagentLatestModel,n\)/);
+  assert.match(localConversationSource, /B\(__codexSubagentLatestEffort,n\)/);
+  assert.match(localConversationSource, /B\(__codexSubagentThreadSettings,n\)/);
   assert.match(localConversationSource, /m=s\|\|d\?\.model/);
   assert.match(localConversationSource, /h=c\?\?d\?\.effort/);
   assert.match(localConversationSource, /model:m/);
@@ -377,7 +377,7 @@ test("build and serve the patched upstream interface", async (context) => {
     "utf8",
   );
   assert.match(subagentPanelSource, /trailing:s/);
-  assert.match(subagentPanelSource, /children:\[c,u,d,s\]/);
+  assert.match(subagentPanelSource, /children:\[c,l,d,s\]/);
   assert.match(subagentPanelSource, /__codex_subagent_header_trailing/);
   const sidePanelSource = await readFile(
     join(
@@ -671,7 +671,7 @@ test("build and serve the patched upstream interface", async (context) => {
 test("rejects unsupported pinned application versions before reading upstream files", async () => {
   await assert.rejects(
     applyUpstreamWebPatches(join(tmpdir(), "missing-upstream"), "1.2.3-test"),
-    /Unsupported Codex Desktop application version 1\.2\.3-test; expected 26\.803\.41515/,
+    /Unsupported Codex Desktop application version 1\.2\.3-test; expected 26\.803\.81509/,
   );
 });
 
