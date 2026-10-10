@@ -71,6 +71,17 @@ async function patchBetterSqlite3ForElectron42(moduleRoot, electronVersion) {
   const helpersPath = join(moduleRoot, "src", "util", "helpers.cpp");
   const macrosPath = join(moduleRoot, "src", "util", "macros.cpp");
 
+  // Newer better-sqlite3 releases already handle tagged V8 external pointers.
+  // Keep their compatibility code; the legacy patch targets older source only.
+  const mainSource = await readFile(mainPath, "utf8");
+  if (mainSource.includes("data = EXTERNAL_NEW(isolate, addon);")) {
+    const macrosSource = await readFile(macrosPath, "utf8");
+    if (macrosSource.includes("#define EXTERNAL_NEW(isolate, value)") &&
+        macrosSource.includes("#define EXTERNAL_VALUE(value)")) {
+      return;
+    }
+  }
+
   await replaceOnce(
     mainPath,
     "v8::Local<v8::External> data = v8::External::New(isolate, addon);",

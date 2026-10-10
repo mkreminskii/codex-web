@@ -6,6 +6,27 @@ Serve the current upstream Codex Desktop interface in a Chromium-family browser 
 
 The wrapper is a single-user service. It is not a replacement Codex client.
 
+## Compatibility
+
+The current adapter supports Codex Desktop **26.1007.21159** (the official
+October 8, 2026 download), using stock Electron **42.3.0**, and has been tested
+with Codex CLI **0.162.1**. The previous Desktop **26.803.81509** adapter remains
+available for an existing local DMG. Other Desktop versions fail with an explicit
+compatibility error until their bundle layout is adapted.
+
+The current app's MessagePort RPC uses its built-in string encoding across the
+browser tunnel. Native Owl shell features that are unavailable in stock Electron
+are disabled in the headless host. OpenAI application code and binaries are
+downloaded at build time and are not included in this repository.
+
+Validation for this version: a clean build from the official DMG, 45 passing
+tests, and Chrome browser checks for sign-in, local project creation and trust,
+a real Codex prompt/response, terminal commands, file viewing, uncommitted diffs, and reconnecting
+after a host restart. Desktop-only integrations remain outside the browser
+adapter's supported surface. The CLI can still reject the desktop's reserved
+`openai-primary-runtime` marketplace sync; optional bundled tools are not covered
+by these core workflow checks.
+
 ## What's working
 
 * Chat and related features
@@ -164,6 +185,22 @@ The build removes these remote telemetry paths from the adapted application:
 The app-server receives `-c analytics.enabled=false`. This command-line override has priority over `config.toml`.
 
 Statsig feature-configuration downloads remain enabled because application features use their results. Authentication and Codex API requests also remain enabled.
+
+## Private certificate authorities
+
+If your network uses a private CA, provide its PEM file to Node before launching
+the build or service, and provide a CA bundle to the CLI:
+
+```sh
+NODE_EXTRA_CA_CERTS=/path/to/company-ca.pem \
+SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt ./src/cli.mjs serve
+```
+
+Electron's Chromium network stack also needs that CA in the service user's NSS
+certificate database. See [Chromium's Linux certificate instructions](https://chromium.googlesource.com/chromium/src/+/main/docs/linux/cert_management.md).
+Node's extra CA setting alone does not configure Chromium's certificate trust.
+For a systemd deployment, put the environment settings in a service override and
+restart the service after configuring certificate trust.
 
 ## Development
 

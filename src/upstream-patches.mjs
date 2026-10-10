@@ -3,6 +3,18 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  currentDesktopVersion,
+  patchCurrentAppServerTransport,
+  patchCurrentIpcDelivery,
+  patchCurrentNativeFeatures,
+  patchCurrentMainTelemetry,
+  patchCurrentRenderer,
+  patchCurrentRpcTransport,
+  patchCurrentShellCompatibility,
+  patchCurrentSidePanel,
+  patchCurrentWorkerTelemetry,
+} from "./current-desktop-patches.mjs";
 
 export function keyboardShortcutSignature(event, isMacOS) {
   const modifierKeys = new Set(["Alt", "Control", "Meta", "Shift"]);
@@ -183,8 +195,8 @@ const browserBridgeSource = String.raw`
     const port = event.ports[0];
     appHostPort = port;
     port.addEventListener("message", event => {
-      if (typeof event.data !== "string" || event.ports.length !== 0) {
-        socket.close(1003, "Unsupported app-host message");
+      if ((typeof event.data !== "string" && event.data !== null) || event.ports.length !== 0) {
+        socket.close(4003, "Unsupported app-host message");
         closeAppHostPort();
         return;
       }
@@ -195,7 +207,7 @@ const browserBridgeSource = String.raw`
       sendAppHostMessage(event.data);
     });
     port.addEventListener("messageerror", () => {
-      socket.close(1007, "Invalid app-host message");
+      socket.close(4007, "Invalid app-host message");
       closeAppHostPort();
     });
     port.start();
@@ -238,8 +250,8 @@ const browserBridgeSource = String.raw`
       return;
     }
     if (message.type === "app-host-message") {
-      if (typeof message.message !== "string") {
-        socket.close(1007, "Invalid app-host message");
+      if (typeof message.message !== "string" && message.message !== null) {
+        socket.close(4007, "Invalid app-host message");
         closeAppHostPort();
         return;
       }
@@ -349,6 +361,7 @@ const browserBridgeSource = String.raw`
 
   const dark = matchMedia("(prefers-color-scheme: dark)");
   let systemThemeVariant = bootstrap.systemThemeVariant;
+  document.documentElement.dataset.theme = systemThemeVariant;
   document.documentElement.classList.add(
     systemThemeVariant === "dark" ? "electron-dark" : "electron-light",
   );
@@ -370,19 +383,21 @@ const browserBridgeSource = String.raw`
       invoke("sendWorkerMessageFromView", [workerId, message]),
     subscribeToWorkerMessages,
     // The upstream renderer uses its web menu when this Electron-only method is absent.
-    getFastModeRolloutMetrics: () => invoke("getFastModeRolloutMetrics"),
+    getFastModeRolloutMetrics: (...args) => invoke("getFastModeRolloutMetrics", args),
     getSharedObjectSnapshotValue: key => bootstrap.sharedObjectSnapshot[key],
     getInitialSidebarBootstrap: () => null,
     getSystemThemeVariant: () => systemThemeVariant,
     subscribeToSystemThemeVariant: callback => {
       const listener = event => {
         systemThemeVariant = event.matches ? "dark" : "light";
+        document.documentElement.dataset.theme = systemThemeVariant;
         callback(systemThemeVariant);
       };
       dark.addEventListener("change", listener);
       return () => dark.removeEventListener("change", listener);
     },
     triggerSentryTestError: () => undefined,
+    getDesktopUserAgent: () => bootstrap.desktopUserAgent,
     getAppSessionId: () => bootstrap.appSessionId,
     getBuildFlavor: () => bootstrap.buildFlavor,
     isDeviceCheckSupported: () => bootstrap.deviceCheckSupported,
@@ -423,13 +438,14 @@ function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
 
     const createBootstrap = () => ({
       appSessionId: ${bridgeAlias}.getAppSessionId(),
+      desktopUserAgent: ${bridgeAlias}.getDesktopUserAgent?.() ?? null,
       buildFlavor: ${bridgeAlias}.getBuildFlavor(),
       deviceCheckSupported: ${bridgeAlias}.isDeviceCheckSupported(),
       intelMacBuild: ${bridgeAlias}.isIntelMacBuild(),
       sentryInitOptions: null,
       sharedObjectSnapshot: ${sharedObjectAlias},
       systemThemeVariant: ${bridgeAlias}.getSystemThemeVariant(),
-      usesOwlAppShell: ${bridgeAlias}.usesOwlAppShell(),
+      usesOwlAppShell: ${bridgeAlias}.usesOwlAppShell?.() ?? false,
     });
 
     const send = message => {
@@ -520,7 +536,7 @@ function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
         const { port1, port2 } = new MessageChannel();
         appHostPort = port1;
         port1.addEventListener("message", event => {
-          if (typeof event.data !== "string" || event.ports.length !== 0) {
+          if ((typeof event.data !== "string" && event.data !== null) || event.ports.length !== 0) {
             failAppHost("The upstream app-host sent an unsupported message");
             return;
           }
@@ -539,7 +555,7 @@ function hostRelaySource(electronAlias, bridgeAlias, sharedObjectAlias) {
       }
 
       if (message?.type === "app-host-message") {
-        if (typeof message.message !== "string") {
+        if (typeof message.message !== "string" && message.message !== null) {
           failAppHost("The browser sent an invalid app-host message");
           return;
         }
@@ -1569,9 +1585,12 @@ function patchWebviewIndex(source) {
 }
 
 export async function applyUpstreamWebPatches(upstreamRoot, applicationVersion) {
+  if (applicationVersion === currentDesktopVersion) {
+    return applyCurrentUpstreamPatches(upstreamRoot);
+  }
   if (applicationVersion !== pinnedApplicationVersion) {
     throw new Error(
-      `Unsupported Codex Desktop application version ${applicationVersion ?? "unknown"}; expected ${pinnedApplicationVersion}`,
+      `Unsupported Codex Desktop application version ${applicationVersion ?? "unknown"}; expected ${pinnedApplicationVersion} or ${currentDesktopVersion}`,
     );
   }
   const preloadPath = join(upstreamRoot, ".vite", "build", "preload.js");
@@ -1799,5 +1818,67 @@ export async function applyUpstreamWebPatches(upstreamRoot, applicationVersion) 
     localConversationPageBundle: localConversationCandidates[0],
     subagentPanelBundle: subagentPanelCandidates[0],
     browserBridge: "__codex_browser_bridge.js",
+  };
+}
+
+async function applyCurrentUpstreamPatches(upstreamRoot) {
+  const { readdir } = await import("node:fs/promises");
+  const buildRoot = join(upstreamRoot, ".vite", "build");
+  const webviewRoot = join(upstreamRoot, "webview");
+  const assetsRoot = join(webviewRoot, "assets");
+  const [buildEntries, assetEntries] = await Promise.all([
+    readdir(buildRoot), readdir(assetsRoot),
+  ]);
+  function bundle(entries, prefix, extension = ".js") {
+    const matches = entries.filter(name => name.startsWith(prefix) && name.endsWith(extension));
+    if (matches.length !== 1) {
+      throw new Error(`Expected one upstream ${prefix} bundle, found ${matches.length}`);
+    }
+    return matches[0];
+  }
+  const mainBundle = bundle(buildEntries, "main-");
+  const transportBundle = bundle(buildEntries, "application-network-startup-");
+  const telemetryBundle = bundle(buildEntries, "bootstrap-");
+  const rendererBundle = bundle(assetEntries, "app-initial-");
+  const sharedBundle = bundle(assetEntries, "app-shared-");
+  const sidePanelBundle = bundle(assetEntries, "thread-app-shell-chrome-");
+  const iconBundle = bundle(assetEntries, "app-", ".png");
+  const [preload, main, worker, transport, telemetry, renderer, shared, sidePanel, index, icon] = await Promise.all([
+    readFile(join(buildRoot, "preload.js"), "utf8"),
+    readFile(join(buildRoot, mainBundle), "utf8"),
+    readFile(join(buildRoot, "worker.js"), "utf8"),
+    readFile(join(buildRoot, transportBundle), "utf8"),
+    readFile(join(buildRoot, telemetryBundle), "utf8"),
+    readFile(join(assetsRoot, rendererBundle), "utf8"),
+    readFile(join(assetsRoot, sharedBundle), "utf8"),
+    readFile(join(assetsRoot, sidePanelBundle), "utf8"),
+    readFile(join(webviewRoot, "index.html"), "utf8"),
+    readFile(join(assetsRoot, iconBundle)),
+  ]);
+  // Validate every patch before writing any files. Chunk names are discovered by
+  // role; the two conversation-page chunks are left under upstream's authority.
+  const patched = [
+    [join(buildRoot, "preload.js"), patchPreload(preload)],
+    [join(buildRoot, mainBundle), patchBrowserFileUrls(patchCurrentIpcDelivery(patchCurrentRpcTransport(patchCurrentNativeFeatures(patchMainProcess(main)))), "main-process")],
+    [join(buildRoot, "worker.js"), patchBrowserFileUrls(patchCurrentWorkerTelemetry(worker), "worker")],
+    [join(buildRoot, transportBundle), patchCurrentAppServerTransport(transport)],
+    [join(buildRoot, telemetryBundle), patchCurrentShellCompatibility(patchCurrentMainTelemetry(telemetry))],
+    [join(assetsRoot, rendererBundle), patchCurrentRenderer(renderer)],
+    [join(assetsRoot, sharedBundle), patchBrowserFileUrls(patchCurrentRpcTransport(shared), "shared renderer")],
+    [join(assetsRoot, sidePanelBundle), patchCurrentSidePanel(sidePanel)],
+    [join(webviewRoot, "index.html"), patchWebviewIndex(index)],
+    [join(webviewRoot, "__codex_browser_bridge.js"), browserBridgeSource],
+    [join(webviewRoot, "manifest.json"), JSON.stringify({
+      name: "Codex", short_name: "Codex", start_url: "/", display: "standalone",
+      background_color: "#000000", theme_color: "#000000",
+      icons: [192, 512].map(size => ({ src: `/icon-${size}.svg`, sizes: `${size}x${size}`, type: "image/svg+xml" })),
+    }, null, 2) + "\n"],
+    ...[192, 512].map(size => [join(webviewRoot, `icon-${size}.svg`), createPwaIconSvg(icon, size)]),
+  ];
+  await Promise.all(patched.map(([path, source]) => writeFile(path, source)));
+  return {
+    mainBundle, workerBundle: "worker.js", appServerTransportBundle: transportBundle,
+    mainSentryBundle: telemetryBundle, rendererBundle, sharedRendererBundle: sharedBundle,
+    sidePanelBundle, browserBridge: "__codex_browser_bridge.js",
   };
 }

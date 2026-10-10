@@ -19,6 +19,7 @@ import { createPackage } from "@electron/asar";
 import { buildWebWrapper } from "../src/build.mjs";
 import { applyUpstreamWebPatches } from "../src/upstream-patches.mjs";
 import { startWebServer } from "../src/serve.mjs";
+import { currentRendererFixture } from "./fixtures/current-renderer.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -36,7 +37,7 @@ async function stageSyntheticRuntime({ candidateRoot, packageJson }) {
   };
 }
 
-async function createSyntheticDmg(root) {
+async function createSyntheticDmg(root, { current = false } = {}) {
   const appSource = join(root, "app-source");
   const webviewRoot = join(appSource, "webview");
   const assetsRoot = join(webviewRoot, "assets");
@@ -57,7 +58,7 @@ async function createSyntheticDmg(root) {
     `${JSON.stringify({
       name: "codex",
       productName: "Codex",
-      version: "26.803.81509",
+      version: current ? "26.1007.21159" : "26.803.81509",
       devDependencies: { electron: "42.3.0" },
     })}\n`,
   );
@@ -136,6 +137,21 @@ async function createSyntheticDmg(root) {
       "var workerFileOrigin=`app://fs`,workerFilePrefix=`/@fs`;\n",
     ].join(""),
   );
+  if (current) {
+    await writeFile(join(assetsRoot, "app-initial-fixture.js"), currentRendererFixture);
+    await writeFile(join(assetsRoot, "app-shared-fixture.js"), "var origin=`app://fs`,prefix=`/@fs`;class RpcPort{encodingLevel=`structuredClonable`}\n");
+    await writeFile(join(assetsRoot, "local-conversation-page-second.js"), "export const splitConversation = true;\n");
+    await rm(join(assetsRoot, "thread-app-shell-chrome-unused.js"), { force: true });
+    await writeFile(join(assetsRoot, "thread-app-shell-chrome-fixture.js"),
+      "function launcher(e){let t=(0,Compiler.c)(13),c={name:`browser.in-app`};let l=capability(Capability,c).isCapable,u;return{id:`thread.sidePanel.openTab`,enabled:l}}\n");
+    await writeFile(join(buildRoot, "application-network-startup-fixture.js"),
+      "class Connection{async connect(){let e=[],t=await resolveCommand(this.options,e);if(!t)throw Error(`Unable to locate the Codex CLI binary or required runtime components.`);return t}}async function resolveCommand(e,t=[]){if(process.platform===`win32`)return null;return realResolver(e,t)}\n");
+    await writeFile(join(buildRoot, "bootstrap-fixture.js"), "const analyticsEnabled=e=>e.analytics?.enabled!==!1;if(process.versions.electron!=null&&typeof electron.app.showTaskManager!=`function`)throw Error(`Codex requires the Owl app shell; stock Electron is no longer supported.`);function reporting(e){e.setWebsiteReportingEnabled(!1);e.setWebsiteReportingEnabled(!0);e.setWebsiteReportingEnabled(!1)}\n");
+    await writeFile(join(buildRoot, "main-fixture.js"), (await readFile(join(buildRoot, "main-fixture.js"), "utf8")) +
+      "function nativeFeatures(){l.app.setDebugChromePagesEnabled(!1);l.app.setDebugChromePagesEnabled(!1);l.app.setDebugChromePagesEnabled(!1);l.app.setRuntimeFeatures({});l.app.setRuntimeFeatures({});l.BrowserWindow.isInputShapeSupported();l.BrowserWindow.isSystemBackdropSupported();l.screen.isCursorScreenPointSupported();return l.app.isRuntimeFeatureEnabled(feature)}class Sender{send(e,t,n){e.isDestroyed()||this.sender.send(e,{channel:t,payload:n})}sendInline(e,t,n){e.isDestroyed()||this.sender.sendInline(e,{channel:t,payload:n})}sendCritical(e,t,n){e.isDestroyed()||this.sender.sendCritical(e,{channel:t,payload:n})}}class BrowserHost{async setInAppBrowserFeatureEnabled(e,t){return e}}class RpcPort{encodingLevel=`structuredClonable`}\n");
+    await writeFile(join(buildRoot, "worker.js"),
+      "function initTelemetry(e,t,n,r){r!=null&&exportTraces(e,`git-worker`,r);return()=>startSentry(e)}var origin=`app://fs`,prefix=`/@fs`;\n");
+  }
   await createPackage(appSource, join(resourcesRoot, "app.asar"));
 
   const dmgPath = join(root, "Codex.dmg");
@@ -673,6 +689,24 @@ test("rejects unsupported pinned application versions before reading upstream fi
     applyUpstreamWebPatches(join(tmpdir(), "missing-upstream"), "1.2.3-test"),
     /Unsupported Codex Desktop application version 1\.2\.3-test; expected 26\.803\.81509/,
   );
+});
+
+test("builds the current desktop with split conversation chunks and shared file URLs", async context => {
+  const root = await mkdtemp(join(tmpdir(), "codex-web-current-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const dmgPath = await createSyntheticDmg(root, { current: true });
+  const result = await buildSyntheticWrapper(root, dmgPath);
+  assert.equal(result.manifest.applicationVersion, "26.1007.21159");
+  const assets = join(result.outputRoot, "upstream", "webview", "assets");
+  assert.equal(await readFile(join(assets, "local-conversation-page-second.js"), "utf8"),
+    "export const splitConversation = true;\n");
+  assert.doesNotMatch(await readFile(join(assets, "app-shared-fixture.js"), "utf8"), /app:\/\/fs/);
+  const renderer = await readFile(join(assets, "app-initial-fixture.js"), "utf8");
+  assert.match(renderer, /__codex_local_folder_browser/);
+  assert.doesNotMatch(renderer, /electron-pick-workspace-root-option/);
+  // Reapplying the adapter must not inject duplicate functions or bridges.
+  await applyUpstreamWebPatches(join(result.outputRoot, "upstream"), "26.1007.21159");
+  assert.equal(await readFile(join(assets, "app-initial-fixture.js"), "utf8"), renderer);
 });
 
 test("a failed build preserves the current generated application", async (context) => {

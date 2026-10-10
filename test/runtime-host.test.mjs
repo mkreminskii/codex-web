@@ -84,6 +84,8 @@ test("reuses the app-server daemon through the upstream proxy", async context =>
     "-c",
     "features.code_mode_host=true",
     "-c",
+    "analytics.enabled=false",
+    "-c",
     'chatgpt_base_url="https://chatgpt.example"',
     "-c",
     'openai_base_url="https://api.example"',

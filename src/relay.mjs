@@ -149,7 +149,7 @@ export function createRendererRelay({
 
       if (
         message.type === "app-host-message" &&
-        typeof message.message !== "string"
+        typeof message.message !== "string" && message.message !== null
       ) {
         socket.close(1007, "Invalid app-host message");
         return;

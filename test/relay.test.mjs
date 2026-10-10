@@ -150,6 +150,13 @@ test("relays opaque bridge and app-host messages through authenticated roles", a
     message: "from-host",
   });
 
+  // MessagePort RPC uses null to signal a closed peer even with string encoding.
+  for (const [sender, receiver] of [[host, browser], [browser, host]]) {
+    const peerClosed = nextJson(receiver);
+    sender.send(JSON.stringify({ type: "app-host-message", message: null }));
+    assert.deepEqual(await peerClosed, { type: "app-host-message", message: null });
+  }
+
   const browserDisconnected = nextJson(host);
   const browserClosed = once(browser, "close");
   browser.close();

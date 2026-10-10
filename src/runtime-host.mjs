@@ -78,7 +78,7 @@ function collectOutput(child) {
 }
 
 export function appServerDaemonArguments(environment) {
-  const arguments_ = ["-c", "features.code_mode_host=true"];
+  const arguments_ = ["-c", "features.code_mode_host=true", "-c", "analytics.enabled=false"];
   for (const [environmentName, configKey] of appServerUrlOverrides) {
     const value = environment[environmentName]?.trim();
     if (value) {
