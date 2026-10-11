@@ -33,6 +33,7 @@ by these core workflow checks.
 * Terminal, Files, Review
 * Right click context menu
 * "Choose project" file browser
+* Website links open directly in a separate browser tab, including links in chat history
 
 ## Removed
 

@@ -42,10 +42,39 @@ export function keyboardShortcutSignature(event, isMacOS) {
   return parts.sort().join("+");
 }
 
-const browserBridgeSource = String.raw`
+export function browserWebsiteUrl(value) {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    if (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username && !url.password
+    ) return url;
+  } catch {}
+  return null;
+}
+
+export function handleBrowserWebsiteLink(event) {
+  if (event.defaultPrevented || (event.button !== 0 && event.button !== 1)) return;
+  const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
+  const url = link && browserWebsiteUrl(link.getAttribute("href"));
+  if (!url || url.origin === location.origin || link.hasAttribute("download")) return;
+
+  // Preserve native navigation and user activation (including Enter and middle
+  // clicks) before the desktop renderer can route the link to its own browser.
+  link.target = "_blank";
+  link.relList.add("noopener", "noreferrer");
+  event.stopImmediatePropagation();
+}
+
+export const browserBridgeSource = String.raw`
 (() => {
   if (globalThis.electronBridge !== undefined) return;
   const keyboardShortcutSignature = ${keyboardShortcutSignature.toString()};
+  const browserWebsiteUrl = ${browserWebsiteUrl.toString()};
+  const handleBrowserWebsiteLink = ${handleBrowserWebsiteLink.toString()};
+  window.addEventListener("click", handleBrowserWebsiteLink, { capture: true });
+  window.addEventListener("auxclick", handleBrowserWebsiteLink, { capture: true });
 
   const socketUrl = new URL("/__codex_bridge?role=browser", location.href);
   socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
@@ -372,6 +401,15 @@ const browserBridgeSource = String.raw`
       invoke("acknowledgeChunkedMessage", [transferId, sequence]),
     getPreloadStartedAtMs: () => performance.timeOrigin,
     sendMessageFromView: message => {
+      if (message.type === "open-in-browser") {
+        const url = browserWebsiteUrl(message.url);
+        if (url !== null) {
+          // Opener buttons must open locally during the user gesture, before
+          // the asynchronous relay loses the browser's popup permission.
+          window.open(url.href, "_blank", "noopener,noreferrer");
+          return Promise.resolve();
+        }
+      }
       if (message.type === "shared-object-set") {
         updateSharedObject(message.key, message.value);
       }
